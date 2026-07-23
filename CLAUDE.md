@@ -65,7 +65,10 @@ commits with --no-verify, no co-author lines. Segmented conventional commits.
 ## Roadmap state (July 2026)
 
 Done: authored frame, body-column placeholder, XPBD flesh (layered core hold),
-tap/hold/brush interaction, dev bench. Next: audio layer (room tone, flesh
-foley, heartbeat riding the hold charge) → kill cam (slow-mo + the only camera
-break + replay) → fidelity phase (sculpted asset, skin SSS + detail maps, HDRI
-lighting, post pipeline, WebGPU compute port of solver) → deploy.
+tap/hold/brush interaction, dev bench, audio layer (room tone, foley,
+heartbeat), kill cam (full-charge trigger, slow-mo, cinema bars, stretched
+audio), impact ripple wavefronts, PMREM environment fill, procedural TSL skin
+material, post pipeline (dof with live focus pull, bloom, vignette, grain).
+Next: sculpted asset with UVs + real skin texture maps (pores need textures —
+procedural bump was punted, @types lag noted in render/pipeline.ts) → perf
+pass / WebGPU compute port of solver+skinning if needed → deploy + domain.
