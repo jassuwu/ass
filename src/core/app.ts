@@ -1,9 +1,13 @@
 import * as THREE from 'three/webgpu';
+import { Pointer } from '../input/pointer';
+import { CameraRig } from '../scene/camera-rig';
 
 export class App {
   private renderer = new THREE.WebGPURenderer({ antialias: true });
   private scene = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(20, 1, 0.1, 100);
+  private rig = new CameraRig();
+  private pointer = new Pointer();
+  private clock = new THREE.Clock();
 
   async start(root: HTMLElement): Promise<void> {
     await this.renderer.init();
@@ -22,11 +26,12 @@ export class App {
     const h = window.innerHeight;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.rig.setAspect(w / h);
   }
 
   private tick(): void {
-    this.renderer.render(this.scene, this.camera);
+    const dt = Math.min(this.clock.getDelta(), 1 / 30);
+    this.rig.update(dt, this.pointer);
+    this.renderer.render(this.scene, this.rig.camera);
   }
 }
