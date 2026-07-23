@@ -30,6 +30,8 @@ const FRAME = {
 
 export class CameraRig {
   readonly camera = new THREE.PerspectiveCamera(FRAME.fovDeg, 1, 0.1, 100);
+  /** composition center — where the frame looks */
+  readonly target = FRAME.target;
   private yaw = 0;
   private pitch = 0;
   private baseDistance = 7;
