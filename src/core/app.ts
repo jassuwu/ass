@@ -1,4 +1,5 @@
 import * as THREE from "three/webgpu";
+import { AudioDirector } from "../audio/director";
 import { Pointer } from "../input/pointer";
 import { SlapInteraction } from "../interaction/slap";
 import { buildLattice } from "../physics/lattice";
@@ -19,6 +20,7 @@ export class App {
   private solver: XpbdSolver;
   private skin: MeshSkin;
   private slap: SlapInteraction;
+  private audio = new AudioDirector();
 
   constructor() {
     const { specimen } = this.stage;
@@ -45,6 +47,7 @@ export class App {
       specimen.proxy,
       this.solver,
     );
+    this.slap.onImpact = (power01) => this.audio.impact(power01);
   }
 
   async start(root: HTMLElement): Promise<void> {
@@ -73,6 +76,7 @@ export class App {
     this.timer.update();
     const dt = THREE.MathUtils.clamp(this.timer.getDelta(), 1 / 240, 1 / 30);
     this.slap.update();
+    this.audio.update(this.slap.charge);
     this.solver.step(dt);
     this.skin.apply(this.solver);
     this.rig.update(dt, this.pointer);
