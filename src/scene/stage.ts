@@ -1,9 +1,9 @@
 import * as THREE from "three/webgpu";
-import { createPlaceholderSpecimen } from "./specimen";
+import { createPlaceholderSpecimen, type Specimen } from "./specimen";
 
 export interface Stage {
   scene: THREE.Scene;
-  specimen: THREE.Mesh;
+  specimen: Specimen;
 }
 
 /**
@@ -16,7 +16,7 @@ export function createStage(): Stage {
   scene.background = new THREE.Color(0x000000);
 
   const specimen = createPlaceholderSpecimen();
-  scene.add(specimen);
+  scene.add(specimen.mesh);
 
   const key = new THREE.SpotLight(0xfff0dd, 280);
   key.position.set(-2.6, 3.4, 4.6);
