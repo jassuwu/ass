@@ -1,4 +1,3 @@
-import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import {
   cameraPosition,
   color,
@@ -13,6 +12,7 @@ import {
 } from "three/tsl";
 import * as THREE from "three/webgpu";
 import { bakeSkinTextures } from "../render/skin-textures";
+import { surfaceNets } from "./surface-nets";
 
 export interface Specimen {
   mesh: THREE.Mesh;
@@ -28,93 +28,133 @@ export interface Specimen {
 }
 
 /**
- * Procedural stand-in for the sculpted asset: a continuous body column so the
- * flesh exits the authored frame — lower back out the top, thighs out the
- * bottom — instead of terminating visibly inside it. Landmarks: waist
- * narrowing, gluteal mass (side fullness + posterior projection), vertical
- * crease continuing into the inner-thigh separation, gluteal fold under each
- * cheek, faint back groove above.
+ * The body as a signed distance field: pelvis + torso + two gluteal masses
+ * + two SEPARATE thighs, blended with smooth-min so the crevices — the
+ * crease between the cheeks, the gluteal fold where cheek meets thigh, the
+ * gap between the legs — emerge from the geometry itself rather than being
+ * carved grooves. Meshed by surface nets with exact SDF-gradient normals.
  *
  * Orientation: +z faces the camera (rear elevation), +y up.
  */
-const Y_MIN = -2.45;
-const Y_MAX = 2.1;
-/** absolute depth (world units) considered fully "core" */
 const CORE_DEPTH = 0.5;
 
-/** cross-section radius at height y along direction (sx, cz) = (sin, cos) of
- * the azimuth from the +z (camera) axis */
-function bodyRadius(y: number, sx: number, cz: number): number {
-  const s = THREE.MathUtils.smoothstep;
-  // base elliptical column, narrowing to the waist above and thighs below
-  const ax = 1.12 - 0.32 * s(y, 0.45, 1.6) - 0.27 * s(-y, 0.7, 1.7);
-  const az = 0.88 - 0.18 * s(y, 0.45, 1.6) - 0.16 * s(-y, 0.7, 1.7);
-  const denom = Math.sqrt((az * sx) ** 2 + (ax * cz) ** 2);
-  let r = (ax * az) / Math.max(denom, 1e-6);
+const BOUNDS_MIN = new THREE.Vector3(-1.6, -2.45, -1.2);
+const BOUNDS_MAX = new THREE.Vector3(1.6, 2.2, 1.4);
 
-  // gluteal mass: sideways fullness + posterior projection toward the camera
-  const cheekY = Math.exp(-(((y + 0.05) / 0.85) ** 2));
-  r += 0.4 * Math.abs(sx) ** 1.35 * cheekY;
-  r += 0.34 * Math.max(0, cz) ** 1.6 * Math.exp(-(((y + 0.15) / 0.7) ** 2));
-
-  const facing = s(cz, 0.05, 0.6);
-  // vertical crease: deepest through the cheeks, continuing as the
-  // inner-thigh separation below and a faint back groove above
-  const valley = Math.exp(-((sx * 4.0) ** 2));
-  const creaseDepth =
-    0.3 * Math.exp(-(((y + 0.35) / 0.8) ** 2)) +
-    0.22 * s(-y, 0.7, 1.1) * (1 - s(-y, 1.7, 2.1)) +
-    0.05 * s(y, 0.5, 1.1);
-  r -= valley * facing * creaseDepth;
-
-  // gluteal fold: the horizontal tuck under each cheek
-  const foldSide =
-    s(Math.abs(sx), 0.1, 0.35) * (1 - s(Math.abs(sx), 0.75, 0.95));
-  r -= 0.11 * Math.exp(-(((y + 0.8) / 0.12) ** 2)) * foldSide * facing;
-
-  // pinch closed far outside the frame
-  const taper = (1 - s(y, 1.55, 2.05)) * (1 - s(-y, 1.9, 2.4));
-  return Math.max(r * taper, 0.02);
+function smin(a: number, b: number, k: number): number {
+  const h = Math.min(Math.max(0.5 + (0.5 * (b - a)) / k, 0), 1);
+  return b * (1 - h) + a * h - k * h * (1 - h);
 }
 
-function buildGeometry(
-  radialSegments: number,
-  heightSegments: number,
-): THREE.BufferGeometry {
-  const raw = new THREE.CylinderGeometry(
-    1,
-    1,
-    Y_MAX - Y_MIN,
-    radialSegments,
-    heightSegments,
-    true,
+function sdEllipsoid(
+  px: number,
+  py: number,
+  pz: number,
+  cx: number,
+  cy: number,
+  cz: number,
+  rx: number,
+  ry: number,
+  rz: number,
+): number {
+  const qx = (px - cx) / rx;
+  const qy = (py - cy) / ry;
+  const qz = (pz - cz) / rz;
+  const k0 = Math.sqrt(qx * qx + qy * qy + qz * qz);
+  if (k0 < 1e-9) return -Math.min(rx, ry, rz);
+  const k1 = Math.sqrt(
+    (qx / rx) * (qx / rx) + (qy / ry) * (qy / ry) + (qz / rz) * (qz / rz),
   );
-  raw.translate(0, (Y_MAX + Y_MIN) / 2, 0);
-  // weld the wrap-around seam so averaged normals don't draw a vertical line
-  raw.deleteAttribute("uv");
-  raw.deleteAttribute("normal");
-  const geometry = mergeVertices(raw);
-  const pos = geometry.attributes.position;
-  const v = new THREE.Vector3();
+  return (k0 * (k0 - 1)) / k1;
+}
 
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    const theta = Math.atan2(v.x, v.z);
-    const sx = Math.sin(theta);
-    const cz = Math.cos(theta);
-    const r = bodyRadius(v.y, sx, cz);
-    pos.setXYZ(i, r * sx, v.y, r * cz);
-  }
-  geometry.computeVertexNormals();
-  return geometry;
+/** capsule with linearly varying radius — a thigh */
+function sdThigh(
+  px: number,
+  py: number,
+  pz: number,
+  ax: number,
+  ay: number,
+  az: number,
+  bx: number,
+  by: number,
+  bz: number,
+  r1: number,
+  r2: number,
+): number {
+  const pax = px - ax;
+  const pay = py - ay;
+  const paz = pz - az;
+  const bax = bx - ax;
+  const bay = by - ay;
+  const baz = bz - az;
+  const h = Math.min(
+    Math.max(
+      (pax * bax + pay * bay + paz * baz) / (bax * bax + bay * bay + baz * baz),
+      0,
+    ),
+    1,
+  );
+  const dx = pax - bax * h;
+  const dy = pay - bay * h;
+  const dz = paz - baz * h;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz) - (r1 + (r2 - r1) * h);
+}
+
+export function bodySdf(x: number, y: number, z: number): number {
+  const pelvis = sdEllipsoid(x, y, z, 0, 0.5, -0.15, 1.25, 0.75, 0.9);
+  const torso = sdEllipsoid(x, y, z, 0, 1.7, -0.18, 1.0, 1.3, 0.8);
+  const gluteL = sdEllipsoid(x, y, z, -0.62, -0.05, 0.3, 0.78, 0.78, 0.82);
+  const gluteR = sdEllipsoid(x, y, z, 0.62, -0.05, 0.3, 0.78, 0.78, 0.82);
+  const thighL = sdThigh(
+    x,
+    y,
+    z,
+    -0.58,
+    -0.7,
+    0.02,
+    -0.66,
+    -2.5,
+    -0.05,
+    0.5,
+    0.4,
+  );
+  const thighR = sdThigh(
+    x,
+    y,
+    z,
+    0.58,
+    -0.7,
+    0.02,
+    0.66,
+    -2.5,
+    -0.05,
+    0.5,
+    0.4,
+  );
+
+  // waist emerges from the pelvis/torso blend
+  let d = smin(pelvis, torso, 0.4);
+  // tight blend between the cheeks keeps the crease a real valley
+  d = smin(d, smin(gluteL, gluteR, 0.08), 0.32);
+  // small blend radius at the thigh junction forms the gluteal fold;
+  // plain min between the thighs keeps the legs separate
+  d = smin(d, Math.min(thighL, thighR), 0.13);
+  return d;
 }
 
 function depth01(p: THREE.Vector3): number {
-  if (p.y < Y_MIN || p.y > Y_MAX) return 0;
-  const h = Math.sqrt(p.x * p.x + p.z * p.z);
-  if (h < 1e-6) return 1;
-  const r = bodyRadius(p.y, p.x / h, p.z / h);
-  return THREE.MathUtils.clamp((r - h) / CORE_DEPTH, 0, 1);
+  if (
+    p.x < BOUNDS_MIN.x ||
+    p.x > BOUNDS_MAX.x ||
+    p.y < BOUNDS_MIN.y ||
+    p.y > BOUNDS_MAX.y ||
+    p.z < BOUNDS_MIN.z ||
+    p.z > BOUNDS_MAX.z
+  ) {
+    return 0;
+  }
+  return THREE.MathUtils.clamp(-bodySdf(p.x, p.y, p.z) / CORE_DEPTH, 0, 1);
 }
 
 function isInside(p: THREE.Vector3): boolean {
@@ -195,11 +235,16 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
 }
 
 export function createPlaceholderSpecimen(): Specimen {
-  const mesh = new THREE.Mesh(buildGeometry(192, 200), createSkinMaterial());
+  const mesh = new THREE.Mesh(
+    surfaceNets(bodySdf, BOUNDS_MIN, BOUNDS_MAX, 0.032),
+    createSkinMaterial(),
+  );
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
 
   const proxy = new THREE.Mesh(
-    buildGeometry(48, 60),
-    new THREE.MeshBasicMaterial(),
+    surfaceNets(bodySdf, BOUNDS_MIN, BOUNDS_MAX, 0.1),
+    new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }),
   );
   proxy.updateMatrixWorld(true);
 

@@ -25,6 +25,14 @@ export function createStage(): Stage {
   key.angle = Math.PI / 3.5;
   key.penumbra = 1;
   key.decay = 2;
+  key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.camera.near = 1;
+  key.shadow.camera.far = 15;
+  key.shadow.bias = -0.0002;
+  // normal bias beats depth bias on smooth curved flesh — kills acne
+  // without peter-panning the crease contact shadow
+  key.shadow.normalBias = 0.03;
   scene.add(key, key.target);
 
   const rimL = new THREE.DirectionalLight(0xcfdcff, 2.2);

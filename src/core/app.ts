@@ -74,6 +74,10 @@ export class App {
     await this.renderer.init();
     this.renderer.toneMapping = THREE.AgXToneMapping;
     this.renderer.toneMappingExposure = 1.15;
+    // self-shadowing: the cheek shading its own crease and fold is a
+    // realism cue no amount of material work can substitute
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     // image-based fill: a real photo studio HDRI (CC0, Poly Haven) gives
     // skin believable soft gradients and specular shapes. Kept dim — the

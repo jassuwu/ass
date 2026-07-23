@@ -9,7 +9,7 @@ import type { Pointer } from "../input/pointer";
 const FRAME = {
   fovDeg: 20,
   /** world-space width the frame shows at the subject plane */
-  frameWidth: 3.7,
+  frameWidth: 3.4,
   /**
    * minimum world-space height the frame must show — stops the subject
    * bursting the frame on ultrawide monitors. Slightly less than the

@@ -32,8 +32,8 @@ export const defaultRippleParams: RippleParams = {
   maxAmp: 0.055,
 };
 
-/** y of the gluteal fold — must match specimen.ts bodyRadius() */
-const FOLD_Y = -0.8;
+/** y of the gluteal fold — must match the glute/thigh junction in specimen.ts */
+const FOLD_Y = -0.72;
 /** attenuation for energy crossing the crease / the fold */
 const CREASE_ATTEN = 0.12;
 const FOLD_ATTEN = 0.3;
