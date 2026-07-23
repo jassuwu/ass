@@ -18,12 +18,12 @@ export function createStage(): Stage {
   const specimen = createPlaceholderSpecimen();
   scene.add(specimen.mesh);
 
-  // analytic lights are accents over the PMREM environment fill (set in app
-  // after renderer init — PMREM needs a live renderer)
-  const key = new THREE.SpotLight(0xfff8f0, 230);
-  key.position.set(-2.6, 3.4, 4.6);
+  // sun-look key per reference: high, warm-white, strong — carving real
+  // form shadow and a bright specular sweep across each cheek
+  const key = new THREE.SpotLight(0xfff3e0, 340);
+  key.position.set(2.4, 5.2, 3.8);
   key.angle = Math.PI / 3.5;
-  key.penumbra = 1;
+  key.penumbra = 0.9;
   key.decay = 2;
   key.castShadow = true;
   key.shadow.mapSize.set(4096, 4096);
@@ -43,7 +43,8 @@ export function createStage(): Stage {
   rimR.position.set(4.5, 0.6, -3);
   scene.add(rimL, rimL.target, rimR, rimR.target);
 
-  scene.add(new THREE.HemisphereLight(0x2a2622, 0x05050a, 0.12));
+  // faint cool sky bounce against the warm sun
+  scene.add(new THREE.HemisphereLight(0x37414f, 0x0a0806, 0.25));
 
   return { scene, specimen };
 }

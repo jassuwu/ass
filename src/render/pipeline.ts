@@ -27,8 +27,9 @@ export class Pipeline {
   /** world-space focus distance, updated per frame */
   readonly focusDistance = uniform(6.5);
   readonly bokehScale = uniform(1.0);
-  /** per-channel white balance, dialable from the dev bench */
-  readonly whiteBalance = uniform(new THREE.Vector3(0.9, 1.03, 1.1));
+  /** per-channel white balance, dialable from the dev bench. Near-neutral
+   * default: the sun-look is MEANT to be warm — don't grade the tan away */
+  readonly whiteBalance = uniform(new THREE.Vector3(0.97, 1.0, 1.04));
   private readonly pipeline: THREE.RenderPipeline;
 
   constructor(

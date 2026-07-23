@@ -151,23 +151,24 @@ function sdLeg(x: number, y: number, z: number, side: number): number {
  * ~1.25x the waist, modest projection.
  */
 export function bodySdf(x: number, y: number, z: number): number {
-  const pelvis = sdEllipsoid(x, y, z, 0, 0.45, -0.12, 1.0, 0.7, 0.78);
-  const torso = sdEllipsoid(x, y, z, 0, 1.65, -0.15, 0.85, 1.3, 0.7);
-  // each cheek: an upper mass + a lower teardrop fullness
-  const upperL = sdEllipsoid(x, y, z, -0.42, -0.08, 0.22, 0.6, 0.68, 0.58);
-  const upperR = sdEllipsoid(x, y, z, 0.42, -0.08, 0.22, 0.6, 0.68, 0.58);
-  const lowerL = sdEllipsoid(x, y, z, -0.4, -0.38, 0.26, 0.5, 0.48, 0.52);
-  const lowerR = sdEllipsoid(x, y, z, 0.4, -0.38, 0.26, 0.5, 0.48, 0.52);
+  const pelvis = sdEllipsoid(x, y, z, 0, 0.45, -0.1, 1.05, 0.7, 0.8);
+  const torso = sdEllipsoid(x, y, z, 0, 1.65, -0.15, 0.8, 1.3, 0.7);
+  // each cheek: an upper mass + a lower teardrop fullness — rounder and
+  // more projected per reference, still anchored by the flat sacral triangle
+  const upperL = sdEllipsoid(x, y, z, -0.44, -0.05, 0.28, 0.64, 0.7, 0.66);
+  const upperR = sdEllipsoid(x, y, z, 0.44, -0.05, 0.28, 0.64, 0.7, 0.66);
+  const lowerL = sdEllipsoid(x, y, z, -0.42, -0.38, 0.32, 0.54, 0.52, 0.6);
+  const lowerR = sdEllipsoid(x, y, z, 0.42, -0.38, 0.32, 0.54, 0.52, 0.6);
   const gluteL = smin(upperL, lowerL, 0.18);
   const gluteR = smin(upperR, lowerR, 0.18);
 
   // waist emerges from the pelvis/torso blend
   let d = smin(pelvis, torso, 0.4);
   // generous blend into the pelvis creates the flat sacral triangle;
-  // tight blend between the cheeks keeps the short cleft a real line
-  d = smin(d, smin(gluteL, gluteR, 0.05), 0.28);
-  // soft blend at the thigh junction: the fold is a suggestion, not a tuck
-  d = smin(d, Math.min(sdLeg(x, y, z, -1), sdLeg(x, y, z, 1)), 0.16);
+  // crease blend must stay >= ~2 mesh cells or the seam aliases into a zipper
+  d = smin(d, smin(gluteL, gluteR, 0.06), 0.28);
+  // defined fold at the thigh junction — reference shows a real crease line
+  d = smin(d, Math.min(sdLeg(x, y, z, -1), sdLeg(x, y, z, 1)), 0.13);
 
   // faint pressure swell beside the cleft (zero on the seam), gated low —
   // in the reference the crease darkens gently, it does not trench
@@ -211,10 +212,10 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
     sheen: 0.2,
     sheenRoughness: 0.6,
     sheenColor: new THREE.Color(0xffdcc8),
-    // the thin oily top layer of skin: a faint tight second highlight.
-    // The reference is matte-satin — keep this nearly invisible.
-    clearcoat: 0.04,
-    clearcoatRoughness: 0.45,
+    // the thin oily top layer of skin: sun-kissed sheen per reference —
+    // present, but short of "wet"
+    clearcoat: 0.12,
+    clearcoatRoughness: 0.3,
   });
 
   const loader = new THREE.TextureLoader();
@@ -249,10 +250,10 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
   // albedo: authored tonal gradients carry the HUE; the scan contributes
   // LUMINANCE detail only. Multiplying skin color by skin color squares the
   // saturation into terracotta — never do that.
-  // sampled off the reference photo: neutral beige, low saturation
-  const base = color(0xc7a48f);
-  const flushed = color(0xb68d7d);
-  const pale = color(0xd8bfab);
+  // sampled off the reference photo: warm sun tan
+  const base = color(0xb27c5c);
+  const flushed = color(0x9d6749);
+  const pale = color(0xc59579);
   const broad = mx_fractal_noise_float(positionWorld.mul(1.4))
     .mul(0.5)
     .add(0.5);
@@ -286,7 +287,7 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
   material.roughnessNode = tp(scanRough, uvScale)
     .r.mul(0.42)
     .add(tp(scanRough, uvScale2).r.mul(0.24))
-    .add(0.22);
+    .add(0.14);
 
   // faked subsurface: deep red bleeding out at grazing angles, gated by the
   // scan's subsurface/thickness map so it varies like real tissue
