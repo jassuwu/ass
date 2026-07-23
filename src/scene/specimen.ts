@@ -1,3 +1,4 @@
+import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import * as THREE from "three/webgpu";
 
 /**
@@ -9,7 +10,12 @@ import * as THREE from "three/webgpu";
  * Orientation: +z faces the camera (rear elevation), +y up.
  */
 export function createPlaceholderSpecimen(): THREE.Mesh {
-  const geometry = new THREE.SphereGeometry(1, 192, 128);
+  // Drop UVs and weld the sphere's wrap-around seam, otherwise averaged
+  // normals split down the middle and draw a visible vertical line.
+  const raw = new THREE.SphereGeometry(1, 192, 128);
+  raw.deleteAttribute("uv");
+  raw.deleteAttribute("normal");
+  const geometry = mergeVertices(raw);
   const pos = geometry.attributes.position;
   const v = new THREE.Vector3();
   const n = new THREE.Vector3();
@@ -24,7 +30,10 @@ export function createPlaceholderSpecimen(): THREE.Mesh {
     const valley = Math.exp(-((n.x * 4.2) ** 2));
     const facing = THREE.MathUtils.smoothstep(n.z, 0.05, 0.65);
     const lower = THREE.MathUtils.smoothstep(-n.y, -0.35, 0.75);
-    const crease = valley * facing * (0.16 + 0.3 * lower);
+    // release the crease before the bottom pole so it fades out instead of
+    // terminating in a hard wedge
+    const release = 1 - THREE.MathUtils.smoothstep(-n.y, 0.72, 0.95);
+    const crease = valley * facing * release * (0.16 + 0.3 * lower);
     // gentle flattening up toward the lower back
     const backTaper = 1 - 0.18 * THREE.MathUtils.smoothstep(n.y, 0.35, 1);
 

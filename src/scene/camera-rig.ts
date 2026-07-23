@@ -10,6 +10,12 @@ const FRAME = {
   fovDeg: 20,
   /** world-space width the frame shows at the subject plane */
   frameWidth: 4.1,
+  /**
+   * minimum world-space height the frame must show — stops the subject
+   * bursting the frame on ultrawide monitors. Slightly less than the
+   * subject's height so the sketch's top/bottom crop is preserved.
+   */
+  minFrameHeight: 1.95,
   /** composition center */
   target: new THREE.Vector3(0, 0, 0),
   /** max parallax, radians */
@@ -34,9 +40,12 @@ export class CameraRig {
     this.camera.updateProjectionMatrix();
     // Solve distance from the horizontal FOV so the subject's width coverage
     // is identical on every screen — the composition is authored, not fitted.
-    const halfWidth =
-      Math.tan(THREE.MathUtils.degToRad(FRAME.fovDeg) / 2) * aspect;
-    this.baseDistance = FRAME.frameWidth / (2 * halfWidth);
+    // On very wide screens the height rule wins instead: the subject stays
+    // vertically framed and the side voids grow.
+    const halfFovY = Math.tan(THREE.MathUtils.degToRad(FRAME.fovDeg) / 2);
+    const byWidth = FRAME.frameWidth / (2 * halfFovY * aspect);
+    const byHeight = FRAME.minFrameHeight / (2 * halfFovY);
+    this.baseDistance = Math.max(byWidth, byHeight);
   }
 
   update(dt: number, pointer: Pointer): void {
