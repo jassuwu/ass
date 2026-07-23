@@ -35,6 +35,13 @@ export class App {
   /** physics sleep: at rest the sim and skinning cost exactly nothing */
   private simSleeping = false;
   private stats: { update: () => void } | null = null;
+  private baseEnvIntensity = 0.22;
+  private readonly baseLightIntensity = {
+    key: this.stage.lights.key.intensity,
+    rimL: this.stage.lights.rimL.intensity,
+    rimR: this.stage.lights.rimR.intensity,
+    hemi: this.stage.lights.hemi.intensity,
+  };
 
   constructor() {
     const { specimen } = this.stage;
@@ -61,15 +68,23 @@ export class App {
       specimen.proxy,
       this.solver,
     );
-    this.slap.onImpact = (power01, point, dir) => {
+    this.slap.onImpact = (power01, point) => {
       this.ripples.spawn(point, power01);
-      // a full charge earns the kill cam — unannounced, undocumented
-      if (power01 >= 0.95 && this.killCam.idle) {
-        this.killCam.trigger(this.rig, point, dir);
-        this.audio.impactCinema(power01, 3);
-      } else {
-        this.audio.impact(power01);
-      }
+      this.audio.impact(power01);
+    };
+    // a full charge earns the kill cam — unannounced, undocumented. The
+    // release is intercepted BEFORE the impulse: the camera travels first,
+    // and the hit lands on camera once the lens is seated.
+    this.slap.onIntercept = (power01, point, dir, power, radius) => {
+      if (power01 < 0.95 || !this.killCam.idle) return false;
+      const kp = this.killCam.params;
+      this.audio.holdBreath();
+      this.killCam.trigger(this.rig, point, dir, () => {
+        this.solver.impulse(point, dir, power, radius);
+        this.ripples.spawn(point, power01, 1.35);
+        this.audio.impactCinema(power01, kp.freezeS + kp.crawlS + kp.returnS);
+      });
+      return true;
     };
   }
 
@@ -98,6 +113,8 @@ export class App {
       this.stage.scene.environment = env.texture;
       this.stage.scene.environmentIntensity = 0.3;
     }
+    this.baseEnvIntensity = this.stage.scene.environmentIntensity;
+    this.stage.scene.add(this.killCam.rake, this.killCam.rake.target);
 
     this.pipeline = new Pipeline(
       this.renderer,
@@ -109,7 +126,13 @@ export class App {
     this.resize();
     window.addEventListener("resize", () => this.resize());
     this.renderer.setAnimationLoop(() => this.tick());
-    void maybeAttachDevGui(this.solver, this.slap, this.ripples, this.pipeline);
+    void maybeAttachDevGui(
+      this.solver,
+      this.slap,
+      this.ripples,
+      this.pipeline,
+      this.killCam,
+    );
     if (new URLSearchParams(window.location.search).has("dev")) {
       const { default: Stats } = await import("stats-gl");
       const stats = new Stats({ trackGPU: true, horizontal: true });
@@ -133,9 +156,22 @@ export class App {
     // substep h=0 and the velocity update (pos-prev)/h NaN the whole lattice
     this.timer.update();
     const dt = THREE.MathUtils.clamp(this.timer.getDelta(), 1 / 240, 1 / 30);
+    this.slap.enabled = !this.killCam.active;
     this.slap.update();
     this.audio.update(this.slap.charge);
     this.killCam.update(dt, this.rig);
+
+    // cinema grade: house lights bow out so the raking light can carve the
+    // wavefront; rims push slightly to keep the silhouette alive in the dark
+    const k = this.killCam.cinema01;
+    const L = this.stage.lights;
+    const base = this.baseLightIntensity;
+    L.key.intensity = base.key * (1 - 0.8 * k);
+    L.rimL.intensity = base.rimL * (1 + 0.25 * k);
+    L.rimR.intensity = base.rimR * (1 + 0.25 * k);
+    L.hemi.intensity = base.hemi * (1 - 0.85 * k);
+    this.stage.scene.environmentIntensity =
+      this.baseEnvIntensity * (1 - 0.85 * k);
 
     if (this.solver.stirred) {
       this.simSleeping = false;

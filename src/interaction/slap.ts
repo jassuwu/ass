@@ -4,11 +4,16 @@ import type { XpbdSolver } from "../physics/solver";
 /**
  * The entire interaction vocabulary, none of it explained on screen:
  * - brush: moving the cursor across the surface drags it faintly
- * - tap: quick press -> small impulse at the cursor
- * - hold still: charge builds silently; release delivers it. The heartbeat
- *   rides this.
- * - press and DRAG: becomes a grab — a handful of flesh follows the hand,
- *   released with whatever velocity it had. The most tactile thing here.
+ * - tap: quick press -> small impulse at the cursor. A tap thrown from a
+ *   MOVING cursor smears in the direction of travel — a real slap has
+ *   follow-through, not just a poke along the view ray.
+ * - hold still: charge builds silently; release delivers it, tilted by
+ *   whatever the hand was doing at release. Past ~1/3 charge the hand is
+ *   cocked: movement no longer converts to a grab, so a wound-up swipe
+ *   lands as a directional haymaker. The heartbeat rides the charge.
+ * - press and DRAG (early in a hold): becomes a grab — a handful of flesh
+ *   follows the hand, and letting go flings it with the hand's velocity.
+ *   The most tactile thing here.
  */
 export interface SlapParams {
   tapPower: number;
@@ -25,6 +30,15 @@ export interface SlapParams {
   grabRadius: number;
   /** how far a grabbed handful can be pulled, world units */
   maxPull: number;
+  /** how strongly cursor motion tilts a slap off the view ray */
+  swipeInfluence: number;
+  /** cursor speed (px/s) that counts as a full swipe */
+  swipeRefSpeed: number;
+  /** extra power multiplier at full swipe — a moving slap stings more */
+  swipePowerBonus: number;
+  /** released-grab fling: hand velocity (u/s) -> impulse strength */
+  flingGain: number;
+  flingMax: number;
 }
 
 export const defaultSlapParams: SlapParams = {
@@ -38,18 +52,43 @@ export const defaultSlapParams: SlapParams = {
   brushRadius: 0.35,
   grabRadius: 0.55,
   maxPull: 0.5,
+  swipeInfluence: 0.85,
+  swipeRefSpeed: 1400,
+  swipePowerBonus: 0.3,
+  flingGain: 0.6,
+  flingMax: 2.5,
 };
 
 /** movement beyond this many px converts a hold into a grab */
 const GRAB_SLOP_PX = 8;
+/** past this charge the hand is cocked — movement no longer grabs */
+const GRAB_CHARGE_LIMIT = 0.35;
+/** pointer samples older than this contribute nothing to the swipe */
+const SWIPE_WINDOW_MS = 100;
 
 export class SlapInteraction {
   readonly params: SlapParams;
   /** 0..1 while holding still, for the audio/visual layers to observe */
   charge = 0;
+  /** while false, input is ignored — time has been taken from the visitor */
+  enabled = true;
   /** fired on delivered impact with normalized power 0..1, point and direction */
   onImpact:
     | ((power01: number, point: THREE.Vector3, dir: THREE.Vector3) => void)
+    | null = null;
+  /**
+   * asked before a release is applied. Returning true claims the impact:
+   * no impulse is applied and no onImpact fires — the interceptor owns
+   * delivery (the kill cam uses this to land the hit on camera, later).
+   */
+  onIntercept:
+    | ((
+        power01: number,
+        point: THREE.Vector3,
+        dir: THREE.Vector3,
+        power: number,
+        radius: number,
+      ) => boolean)
     | null = null;
 
   private readonly camera: THREE.Camera;
@@ -65,6 +104,14 @@ export class SlapInteraction {
   private readonly grabOrigin = new THREE.Vector3();
   private readonly grabOffset = new THREE.Vector3();
   private lastBrush: { point: THREE.Vector3; time: number } | null = null;
+  /** rolling pointer trail for swipe velocity, ~SWIPE_WINDOW_MS deep */
+  private readonly trail: { x: number; y: number; t: number }[] = [];
+  /** smoothed world-space hand velocity while grabbing */
+  private readonly handVel = new THREE.Vector3();
+  private readonly lastGrabOffset = new THREE.Vector3();
+  private lastGrabT = 0;
+  private readonly tmpA = new THREE.Vector3();
+  private readonly tmpB = new THREE.Vector3();
 
   constructor(
     dom: HTMLElement,
@@ -112,7 +159,32 @@ export class SlapInteraction {
     return hits.length > 0 ? hits[0] : null;
   }
 
+  private track(x: number, y: number): void {
+    const t = performance.now();
+    this.trail.push({ x, y, t });
+    while (this.trail.length > 0 && t - this.trail[0].t > SWIPE_WINDOW_MS) {
+      this.trail.shift();
+    }
+  }
+
+  /** screen-space cursor velocity over the trail window, px/s */
+  private swipe(): { vx: number; vy: number; speed: number } {
+    const n = this.trail.length;
+    const newest = this.trail[n - 1];
+    // a stopped cursor emits no events — stale trail means no swipe
+    if (n < 2 || performance.now() - newest.t > 80) {
+      return { vx: 0, vy: 0, speed: 0 };
+    }
+    const oldest = this.trail[0];
+    const dt = (newest.t - oldest.t) / 1000;
+    if (dt < 8e-3) return { vx: 0, vy: 0, speed: 0 };
+    const vx = (newest.x - oldest.x) / dt;
+    const vy = (newest.y - oldest.y) / dt;
+    return { vx, vy, speed: Math.hypot(vx, vy) };
+  }
+
   private onDown(e: PointerEvent): void {
+    if (!this.enabled) return;
     const hit = this.cast(e.clientX, e.clientY);
     if (!hit) return;
     this.mode = "pending";
@@ -127,6 +199,20 @@ export class SlapInteraction {
     if (this.mode === "grab") {
       this.solver.endGrab();
       this.mode = "idle";
+      // the handful leaves with the hand's velocity — but only if the hand
+      // was actually still moving (a paused hand releases gently)
+      const p = this.params;
+      const speed = this.handVel.length();
+      if (speed > 0.25 && performance.now() - this.lastGrabT < 90) {
+        this.tmpA.copy(this.grabOrigin).add(this.grabOffset);
+        this.solver.impulse(
+          this.tmpA,
+          this.handVel,
+          Math.min(p.flingMax, speed * p.flingGain),
+          p.grabRadius,
+        );
+      }
+      this.handVel.set(0, 0, 0);
       return;
     }
     if (this.mode !== "pending") return;
@@ -141,23 +227,56 @@ export class SlapInteraction {
       heldMs <= p.tapThresholdMs ? 0 : Math.min(1, heldMs / p.chargeTimeMs);
     // ease-in so a lazy half-hold doesn't already feel like a haymaker
     const curve = charge * charge;
-    const power = p.tapPower + curve * p.chargeBonus;
     const radius = p.radius + curve * p.chargeRadiusBonus;
-    this.solver.impulse(hit.point, this.raycaster.ray.direction, power, radius);
-    this.onImpact?.(
-      power / (p.tapPower + p.chargeBonus),
-      hit.point,
-      this.raycaster.ray.direction,
-    );
+    // cloned: the raycaster's direction is reused by every later cast
+    const point = hit.point.clone();
+    const dir = this.raycaster.ray.direction.clone();
+
+    // follow-through: tilt the impulse toward where the cursor is headed
+    const { vx, vy, speed } = this.swipe();
+    const swipe01 = Math.min(1, speed / p.swipeRefSpeed);
+    let power = p.tapPower + curve * p.chargeBonus;
+    if (swipe01 > 0.02) {
+      power *= 1 + p.swipePowerBonus * swipe01;
+      // world direction of the swipe: re-cast a few px ahead along the
+      // cursor's travel and take the delta on the hit-distance plane
+      const ahead = 24 / speed;
+      this.setRay(e.clientX + vx * ahead, e.clientY + vy * ahead);
+      this.tmpA
+        .copy(this.raycaster.ray.origin)
+        .addScaledVector(this.raycaster.ray.direction, hit.distance)
+        .sub(point);
+      if (this.tmpA.lengthSq() > 1e-12) {
+        dir
+          .addScaledVector(this.tmpA.normalize(), p.swipeInfluence * swipe01)
+          .normalize();
+      }
+    }
+    const power01 = Math.min(1, power / (p.tapPower + p.chargeBonus));
+    if (this.onIntercept?.(power01, point, dir, power, radius)) return;
+    this.solver.impulse(point, dir, power, radius);
+    this.onImpact?.(power01, point, dir);
   }
 
   private onMove(e: PointerEvent): void {
+    this.track(e.clientX, e.clientY);
     if (this.mode === "pending") {
       const dx = e.clientX - this.downX;
       const dy = e.clientY - this.downY;
-      if (dx * dx + dy * dy > GRAB_SLOP_PX * GRAB_SLOP_PX) {
+      const heldMs = performance.now() - this.holdStart;
+      // quick flicks stay slaps (they land with follow-through); a
+      // deliberate hold-and-drag grabs; a deep charge means the hand is
+      // cocked and movement is just aiming
+      if (
+        dx * dx + dy * dy > GRAB_SLOP_PX * GRAB_SLOP_PX &&
+        heldMs > this.params.tapThresholdMs &&
+        this.charge < GRAB_CHARGE_LIMIT
+      ) {
         this.mode = "grab";
         this.solver.startGrab(this.grabOrigin, this.params.grabRadius);
+        this.handVel.set(0, 0, 0);
+        this.lastGrabOffset.set(0, 0, 0);
+        this.lastGrabT = performance.now();
       }
     }
 
@@ -172,9 +291,21 @@ export class SlapInteraction {
         this.grabOffset.setLength(this.params.maxPull);
       }
       this.solver.setGrabOffset(this.grabOffset);
+      // smoothed hand velocity, for the fling on release
+      const now = performance.now();
+      const gdt = (now - this.lastGrabT) / 1000;
+      if (gdt > 4e-3) {
+        this.tmpB
+          .copy(this.grabOffset)
+          .sub(this.lastGrabOffset)
+          .divideScalar(gdt);
+        this.handVel.lerp(this.tmpB, 0.35);
+        this.lastGrabOffset.copy(this.grabOffset);
+        this.lastGrabT = now;
+      }
       return;
     }
-    if (this.mode !== "idle") return;
+    if (this.mode !== "idle" || !this.enabled) return;
 
     // brush
     const now = performance.now();

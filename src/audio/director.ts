@@ -67,6 +67,16 @@ export class AudioDirector {
     }
   }
 
+  /**
+   * the dive has begun but nothing has hit yet: the room goes silent fast.
+   * impactCinema (fired at delivery) owns bringing it back.
+   */
+  holdBreath(): void {
+    const g = this.engine.current;
+    if (!g || !this.roomGain) return;
+    this.roomGain.gain.setTargetAtTime(0.02, g.ctx.currentTime, 0.08);
+  }
+
   /** impact from the interaction layer; power01 in 0..1 */
   impact(power01: number): void {
     const g = this.engine.current;

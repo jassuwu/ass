@@ -4,6 +4,13 @@ import { createPlaceholderSpecimen, type Specimen } from "./specimen";
 export interface Stage {
   scene: THREE.Scene;
   specimen: Specimen;
+  /** the house lights — the kill cam dims them to let its raking light win */
+  lights: {
+    key: THREE.SpotLight;
+    rimL: THREE.DirectionalLight;
+    rimR: THREE.DirectionalLight;
+    hemi: THREE.HemisphereLight;
+  };
 }
 
 /**
@@ -44,7 +51,8 @@ export function createStage(): Stage {
   scene.add(rimL, rimL.target, rimR, rimR.target);
 
   // faint cool sky bounce against the warm sun
-  scene.add(new THREE.HemisphereLight(0x37414f, 0x0a0806, 0.25));
+  const hemi = new THREE.HemisphereLight(0x37414f, 0x0a0806, 0.25);
+  scene.add(hemi);
 
-  return { scene, specimen };
+  return { scene, specimen, lights: { key, rimL, rimR, hemi } };
 }

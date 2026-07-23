@@ -61,8 +61,13 @@ export class RippleField {
     this.params = { ...defaultRippleParams, ...params };
   }
 
-  spawn(point: { x: number; y: number; z: number }, power01: number): void {
-    const amp = this.params.maxAmp * (0.25 + 0.75 * Math.min(power01, 1));
+  spawn(
+    point: { x: number; y: number; z: number },
+    power01: number,
+    ampScale = 1,
+  ): void {
+    const amp =
+      this.params.maxAmp * (0.25 + 0.75 * Math.min(power01, 1)) * ampScale;
     this.list.push({
       x: point.x,
       y: point.y,

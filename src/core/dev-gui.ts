@@ -2,6 +2,7 @@ import type { SlapInteraction } from "../interaction/slap";
 import type { RippleField } from "../physics/ripples";
 import type { XpbdSolver } from "../physics/solver";
 import type { Pipeline } from "../render/pipeline";
+import type { KillCam } from "../scene/kill-cam";
 
 /**
  * Tuning bench, dev only: append ?dev to the URL. Dynamically imported so
@@ -12,6 +13,7 @@ export async function maybeAttachDevGui(
   slap: SlapInteraction,
   ripples: RippleField,
   pipeline: Pipeline | null,
+  killCam: KillCam,
 ): Promise<void> {
   if (!new URLSearchParams(window.location.search).has("dev")) return;
   const { default: GUI } = await import("lil-gui");
@@ -35,6 +37,11 @@ export async function maybeAttachDevGui(
   i.add(slap.params, "brushRadius", 0.05, 0.8);
   i.add(slap.params, "grabRadius", 0.2, 1.2);
   i.add(slap.params, "maxPull", 0.1, 1);
+  i.add(slap.params, "swipeInfluence", 0, 1.5);
+  i.add(slap.params, "swipeRefSpeed", 300, 3000);
+  i.add(slap.params, "swipePowerBonus", 0, 1);
+  i.add(slap.params, "flingGain", 0, 2);
+  i.add(slap.params, "flingMax", 0, 5);
 
   if (pipeline) {
     const g = gui.addFolder("grade");
@@ -43,6 +50,15 @@ export async function maybeAttachDevGui(
     g.add(pipeline.whiteBalance.value, "z", 0.5, 1.5).name("blue");
     g.add(pipeline.bokehScale, "value", 0, 4).name("bokeh");
   }
+
+  const k = gui.addFolder("kill cam");
+  k.add(killCam.params, "diveS", 0.2, 1.5);
+  k.add(killCam.params, "freezeS", 0, 2);
+  k.add(killCam.params, "crawlS", 0.5, 4);
+  k.add(killCam.params, "returnS", 0.3, 1.5);
+  k.add(killCam.params, "deepSlow", 0.01, 0.3);
+  k.add(killCam.params, "crawlEndScale", 0.05, 1);
+  k.add(killCam.params, "rakeIntensity", 0, 200);
 
   const r = gui.addFolder("ripples");
   r.add(ripples.params, "speed", 0.5, 6);
