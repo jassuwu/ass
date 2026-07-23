@@ -1,4 +1,5 @@
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
 import * as THREE from "three/webgpu";
 import { AudioDirector } from "../audio/director";
 import { Pointer } from "../input/pointer";
@@ -74,14 +75,21 @@ export class App {
     this.renderer.toneMapping = THREE.AgXToneMapping;
     this.renderer.toneMappingExposure = 1.15;
 
-    // image-based fill: a dim studio environment gives the soft gradients
-    // and reflections that make skin read as lit by a room, not by three
-    // point lights in a vacuum. Kept low — the void must stay a void.
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04);
-    pmrem.dispose();
-    this.stage.scene.environment = env.texture;
-    this.stage.scene.environmentIntensity = 0.3;
+    // image-based fill: a real photo studio HDRI (CC0, Poly Haven) gives
+    // skin believable soft gradients and specular shapes. Kept dim — the
+    // void must stay a void. Falls back to a synthetic room if it 404s.
+    try {
+      const hdr = await new RGBELoader().loadAsync("/env/studio.hdr");
+      hdr.mapping = THREE.EquirectangularReflectionMapping;
+      this.stage.scene.environment = hdr;
+      this.stage.scene.environmentIntensity = 0.35;
+    } catch {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      const env = pmrem.fromScene(new RoomEnvironment(), 0.04);
+      pmrem.dispose();
+      this.stage.scene.environment = env.texture;
+      this.stage.scene.environmentIntensity = 0.3;
+    }
 
     this.pipeline = new Pipeline(
       this.renderer,

@@ -7,8 +7,12 @@ import {
   mx_fractal_noise_float,
   normalWorld,
   positionWorld,
+  texture,
+  transformNormalToView,
+  vec3,
 } from "three/tsl";
 import * as THREE from "three/webgpu";
+import { bakeSkinTextures } from "../render/skin-textures";
 
 export interface Specimen {
   mesh: THREE.Mesh;
@@ -144,10 +148,42 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
     fine.mul(0.22),
   );
 
-  // spec breakup: skin is never one roughness either
-  material.roughnessNode = float(0.48).add(
-    mx_fractal_noise_float(positionWorld.mul(22)).mul(0.09),
+  // micro-detail: baked pore/fold maps, sampled triplanar (no UVs needed).
+  // ~0.55 world units per tile puts pore spacing at believable screen scale.
+  const detail = bakeSkinTextures();
+  const uvScale = 1.8;
+  const w = normalWorld.abs().pow(4);
+  const wSum = w.x.add(w.y).add(w.z);
+  const wx = w.x.div(wSum);
+  const wy = w.y.div(wSum);
+  const wz = w.z.div(wSum);
+
+  const decode = (t: ReturnType<typeof texture>) => t.xy.mul(2).sub(1);
+  const nX = decode(texture(detail.normalMap, positionWorld.zy.mul(uvScale)));
+  const nY = decode(texture(detail.normalMap, positionWorld.xz.mul(uvScale)));
+  const nZ = decode(texture(detail.normalMap, positionWorld.xy.mul(uvScale)));
+  // UDN-style triplanar blend: each projection perturbs its own plane axes
+  const perturb = vec3(float(0), nX.y, nX.x)
+    .mul(wx)
+    .add(vec3(nY.x, float(0), nY.y).mul(wy))
+    .add(vec3(nZ.x, nZ.y, float(0)).mul(wz))
+    .mul(0.55);
+  material.normalNode = transformNormalToView(
+    normalWorld.add(perturb).normalize(),
   );
+
+  const dX = texture(detail.detailMap, positionWorld.zy.mul(uvScale));
+  const dY = texture(detail.detailMap, positionWorld.xz.mul(uvScale));
+  const dZ = texture(detail.detailMap, positionWorld.xy.mul(uvScale));
+  const det = dX.mul(wx).add(dY.mul(wy)).add(dZ.mul(wz));
+
+  // pores sit in slight shadow — modulate albedo by the baked ao
+  material.colorNode = material.colorNode?.mul(det.r.mul(0.3).add(0.7));
+
+  // spec breakup: baked micro-roughness over broad procedural drift
+  material.roughnessNode = float(0.42)
+    .add(mx_fractal_noise_float(positionWorld.mul(22)).mul(0.07))
+    .add(det.g.sub(0.5).mul(0.3));
 
   // faked subsurface: deep red bleeding out at grazing angles, strongest
   // where the silhouette thins against the rim lights
