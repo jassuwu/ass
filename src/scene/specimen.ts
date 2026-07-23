@@ -101,45 +101,63 @@ function sdThigh(
   return Math.sqrt(dx * dx + dy * dy + dz * dz) - (r1 + (r2 - r1) * h);
 }
 
+/**
+ * A leg is not a rod: a tapered core, a hamstring mass carrying the fold's
+ * rear fullness into the leg, and an adductor mass keeping the inner gap
+ * narrow high up. All per-side, mirrored by `side` = ±1.
+ */
+function sdLeg(x: number, y: number, z: number, side: number): number {
+  const core = sdThigh(
+    x,
+    y,
+    z,
+    side * 0.6,
+    -0.55,
+    0.02,
+    side * 0.64,
+    -2.5,
+    -0.08,
+    0.52,
+    0.34,
+  );
+  const hamstring = sdEllipsoid(
+    x,
+    y,
+    z,
+    side * 0.58,
+    -0.95,
+    0.14,
+    0.42,
+    0.55,
+    0.4,
+  );
+  const adductor = sdEllipsoid(
+    x,
+    y,
+    z,
+    side * 0.4,
+    -0.85,
+    0.0,
+    0.34,
+    0.5,
+    0.34,
+  );
+  return smin(smin(core, hamstring, 0.18), adductor, 0.15);
+}
+
 export function bodySdf(x: number, y: number, z: number): number {
   const pelvis = sdEllipsoid(x, y, z, 0, 0.5, -0.15, 1.25, 0.75, 0.9);
   const torso = sdEllipsoid(x, y, z, 0, 1.7, -0.18, 1.0, 1.3, 0.8);
   const gluteL = sdEllipsoid(x, y, z, -0.62, -0.05, 0.3, 0.78, 0.78, 0.82);
   const gluteR = sdEllipsoid(x, y, z, 0.62, -0.05, 0.3, 0.78, 0.78, 0.82);
-  const thighL = sdThigh(
-    x,
-    y,
-    z,
-    -0.58,
-    -0.7,
-    0.02,
-    -0.66,
-    -2.5,
-    -0.05,
-    0.5,
-    0.4,
-  );
-  const thighR = sdThigh(
-    x,
-    y,
-    z,
-    0.58,
-    -0.7,
-    0.02,
-    0.66,
-    -2.5,
-    -0.05,
-    0.5,
-    0.4,
-  );
 
   // waist emerges from the pelvis/torso blend
   let d = smin(pelvis, torso, 0.4);
   // tight blend between the cheeks keeps the crease a real valley
   d = smin(d, smin(gluteL, gluteR, 0.08), 0.32);
   // small blend radius at the thigh junction forms the gluteal fold;
-  // plain min between the thighs keeps the legs separate
-  d = smin(d, Math.min(thighL, thighR), 0.13);
+  // plain min between the legs keeps them separate
+  d = smin(d, Math.min(sdLeg(x, y, z, -1), sdLeg(x, y, z, 1)), 0.13);
   return d;
 }
 
@@ -168,16 +186,16 @@ function isInside(p: THREE.Vector3): boolean {
  */
 function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
   const material = new THREE.MeshPhysicalNodeMaterial({
-    sheen: 0.3,
-    sheenRoughness: 0.55,
-    sheenColor: new THREE.Color(0xffe4d6),
+    sheen: 0.2,
+    sheenRoughness: 0.6,
+    sheenColor: new THREE.Color(0xffdcc8),
   });
 
   // albedo: warm base with two scales of mottling — broad tonal drift and
-  // a finer capillary flush. Skin is never one color.
-  const base = color(0xc79b83);
-  const flushed = color(0xb27866);
-  const pale = color(0xd7b49e);
+  // a finer capillary flush. Skin is never one color, and never near-white.
+  const base = color(0xb98a70);
+  const flushed = color(0xa76b59);
+  const pale = color(0xc9a184);
   const broad = mx_fractal_noise_float(positionWorld.mul(1.4))
     .mul(0.5)
     .add(0.5);
@@ -191,7 +209,7 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
   // micro-detail: baked pore/fold maps, sampled triplanar (no UVs needed).
   // ~0.55 world units per tile puts pore spacing at believable screen scale.
   const detail = bakeSkinTextures();
-  const uvScale = 1.8;
+  const uvScale = 3.2;
   const w = normalWorld.abs().pow(4);
   const wSum = w.x.add(w.y).add(w.z);
   const wx = w.x.div(wSum);
@@ -207,7 +225,7 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
     .mul(wx)
     .add(vec3(nY.x, float(0), nY.y).mul(wy))
     .add(vec3(nZ.x, nZ.y, float(0)).mul(wz))
-    .mul(0.55);
+    .mul(0.32);
   material.normalNode = transformNormalToView(
     normalWorld.add(perturb).normalize(),
   );
@@ -218,7 +236,7 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
   const det = dX.mul(wx).add(dY.mul(wy)).add(dZ.mul(wz));
 
   // pores sit in slight shadow — modulate albedo by the baked ao
-  material.colorNode = material.colorNode?.mul(det.r.mul(0.3).add(0.7));
+  material.colorNode = material.colorNode?.mul(det.r.mul(0.18).add(0.82));
 
   // spec breakup: baked micro-roughness over broad procedural drift
   material.roughnessNode = float(0.42)

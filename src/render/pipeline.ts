@@ -28,8 +28,9 @@ export class Pipeline {
     const viewZ = scenePass.getViewZNode();
 
     // bloom on the sharp frame, then defocus the sum — highlights halo
-    // before they blur, which is how a lens does it
-    const bloomed = color.add(bloom(color, 0.18, 0.3, 0.88));
+    // before they blur, which is how a lens does it. Restrained: only true
+    // highlights may glow, and only barely.
+    const bloomed = color.add(bloom(color, 0.06, 0.18, 0.96));
     // @types/three declares dof() as a bare class with no node value type;
     // at runtime it is a vec4-producing TSL node
     const focused = dof(

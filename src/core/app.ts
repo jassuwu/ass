@@ -73,7 +73,7 @@ export class App {
   async start(root: HTMLElement): Promise<void> {
     await this.renderer.init();
     this.renderer.toneMapping = THREE.AgXToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.0;
     // self-shadowing: the cheek shading its own crease and fold is a
     // realism cue no amount of material work can substitute
     this.renderer.shadowMap.enabled = true;
@@ -86,7 +86,7 @@ export class App {
       const hdr = await new RGBELoader().loadAsync("/env/studio.hdr");
       hdr.mapping = THREE.EquirectangularReflectionMapping;
       this.stage.scene.environment = hdr;
-      this.stage.scene.environmentIntensity = 0.35;
+      this.stage.scene.environmentIntensity = 0.28;
     } catch {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
       const env = pmrem.fromScene(new RoomEnvironment(), 0.04);
