@@ -1,4 +1,13 @@
 import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+import {
+  cameraPosition,
+  color,
+  float,
+  mix,
+  mx_fractal_noise_float,
+  normalWorld,
+  positionWorld,
+} from "three/tsl";
 import * as THREE from "three/webgpu";
 
 export interface Specimen {
@@ -108,14 +117,49 @@ function isInside(p: THREE.Vector3): boolean {
   return depth01(p) > 0;
 }
 
-export function createPlaceholderSpecimen(): Specimen {
-  const material = new THREE.MeshPhysicalMaterial({
-    color: 0x9c8a7d,
-    roughness: 0.55,
-    sheen: 0.25,
-    sheenRoughness: 0.6,
+/**
+ * Skin, procedurally: no UVs exist yet (they arrive with the sculpted
+ * asset), so every map is a function of world position — which conveniently
+ * also survives deformation without stretching.
+ */
+function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
+  const material = new THREE.MeshPhysicalNodeMaterial({
+    sheen: 0.3,
+    sheenRoughness: 0.55,
+    sheenColor: new THREE.Color(0xffe4d6),
   });
-  const mesh = new THREE.Mesh(buildGeometry(192, 200), material);
+
+  // albedo: warm base with two scales of mottling — broad tonal drift and
+  // a finer capillary flush. Skin is never one color.
+  const base = color(0xc79b83);
+  const flushed = color(0xb27866);
+  const pale = color(0xd7b49e);
+  const broad = mx_fractal_noise_float(positionWorld.mul(1.4))
+    .mul(0.5)
+    .add(0.5);
+  const fine = mx_fractal_noise_float(positionWorld.mul(6.5)).mul(0.5).add(0.5);
+  material.colorNode = mix(
+    mix(base, pale, broad.mul(0.35)),
+    flushed,
+    fine.mul(0.22),
+  );
+
+  // spec breakup: skin is never one roughness either
+  material.roughnessNode = float(0.48).add(
+    mx_fractal_noise_float(positionWorld.mul(22)).mul(0.09),
+  );
+
+  // faked subsurface: deep red bleeding out at grazing angles, strongest
+  // where the silhouette thins against the rim lights
+  const viewDir = cameraPosition.sub(positionWorld).normalize();
+  const fresnel = normalWorld.dot(viewDir).clamp(0, 1).oneMinus().pow(3);
+  material.emissiveNode = color(0x3d0d05).mul(fresnel).mul(0.55);
+
+  return material;
+}
+
+export function createPlaceholderSpecimen(): Specimen {
+  const mesh = new THREE.Mesh(buildGeometry(192, 200), createSkinMaterial());
 
   const proxy = new THREE.Mesh(
     buildGeometry(48, 60),
