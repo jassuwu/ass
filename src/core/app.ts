@@ -23,7 +23,13 @@ export class App {
   constructor() {
     const { specimen } = this.stage;
     specimen.mesh.geometry.computeBoundingBox();
-    const bounds = specimen.mesh.geometry.boundingBox ?? new THREE.Box3();
+    const bounds = (
+      specimen.mesh.geometry.boundingBox ?? new THREE.Box3()
+    ).clone();
+    // simulate only the band around the cheeks; the distant torso and legs
+    // are out of frame and ride the anchored lattice boundary
+    bounds.min.y = Math.max(bounds.min.y, -1.75);
+    bounds.max.y = Math.min(bounds.max.y, 1.5);
     this.solver = new XpbdSolver(
       buildLattice(
         specimen.isInside,

@@ -15,72 +15,97 @@ export interface Specimen {
 }
 
 /**
- * Procedural stand-in for the sculpted asset: a displaced sphere with the
- * right silhouette for composition and lighting work. Deliberately rendered
- * as neutral clay — skin shading is its own phase. The physics lattice binds
- * to whatever mesh lives here, so the swap later is contained.
+ * Procedural stand-in for the sculpted asset: a continuous body column so the
+ * flesh exits the authored frame — lower back out the top, thighs out the
+ * bottom — instead of terminating visibly inside it. Landmarks: waist
+ * narrowing, gluteal mass (side fullness + posterior projection), vertical
+ * crease continuing into the inner-thigh separation, gluteal fold under each
+ * cheek, faint back groove above.
  *
  * Orientation: +z faces the camera (rear elevation), +y up.
  */
-const SCALE = new THREE.Vector3(1.18, 0.98, 0.88);
+const Y_MIN = -2.45;
+const Y_MAX = 2.1;
+/** absolute depth (world units) considered fully "core" */
+const CORE_DEPTH = 0.5;
 
-/** radius of the surface along unit direction n, before axis scaling */
-function shapeRadius(n: THREE.Vector3): number {
-  // side fullness — the two lobes
-  const lobe = 0.42 * Math.abs(n.x) ** 1.35;
-  // vertical crease on the camera-facing half, deepening toward the bottom
-  const valley = Math.exp(-((n.x * 4.2) ** 2));
-  const facing = THREE.MathUtils.smoothstep(n.z, 0.05, 0.65);
-  const lower = THREE.MathUtils.smoothstep(-n.y, -0.35, 0.75);
-  // release the crease before the bottom pole so it fades out instead of
-  // terminating in a hard wedge
-  const release = 1 - THREE.MathUtils.smoothstep(-n.y, 0.72, 0.95);
-  const crease = valley * facing * release * (0.16 + 0.3 * lower);
-  // gentle flattening up toward the lower back
-  const backTaper = 1 - 0.18 * THREE.MathUtils.smoothstep(n.y, 0.35, 1);
-  return (1 + lobe - crease) * backTaper;
+/** cross-section radius at height y along direction (sx, cz) = (sin, cos) of
+ * the azimuth from the +z (camera) axis */
+function bodyRadius(y: number, sx: number, cz: number): number {
+  const s = THREE.MathUtils.smoothstep;
+  // base elliptical column, narrowing to the waist above and thighs below
+  const ax = 1.12 - 0.32 * s(y, 0.45, 1.6) - 0.27 * s(-y, 0.7, 1.7);
+  const az = 0.88 - 0.18 * s(y, 0.45, 1.6) - 0.16 * s(-y, 0.7, 1.7);
+  const denom = Math.sqrt((az * sx) ** 2 + (ax * cz) ** 2);
+  let r = (ax * az) / Math.max(denom, 1e-6);
+
+  // gluteal mass: sideways fullness + posterior projection toward the camera
+  const cheekY = Math.exp(-(((y + 0.05) / 0.85) ** 2));
+  r += 0.4 * Math.abs(sx) ** 1.35 * cheekY;
+  r += 0.34 * Math.max(0, cz) ** 1.6 * Math.exp(-(((y + 0.15) / 0.7) ** 2));
+
+  const facing = s(cz, 0.05, 0.6);
+  // vertical crease: deepest through the cheeks, continuing as the
+  // inner-thigh separation below and a faint back groove above
+  const valley = Math.exp(-((sx * 4.0) ** 2));
+  const creaseDepth =
+    0.3 * Math.exp(-(((y + 0.35) / 0.8) ** 2)) +
+    0.22 * s(-y, 0.7, 1.1) * (1 - s(-y, 1.7, 2.1)) +
+    0.05 * s(y, 0.5, 1.1);
+  r -= valley * facing * creaseDepth;
+
+  // gluteal fold: the horizontal tuck under each cheek
+  const foldSide =
+    s(Math.abs(sx), 0.1, 0.35) * (1 - s(Math.abs(sx), 0.75, 0.95));
+  r -= 0.11 * Math.exp(-(((y + 0.8) / 0.12) ** 2)) * foldSide * facing;
+
+  // pinch closed far outside the frame
+  const taper = (1 - s(y, 1.55, 2.05)) * (1 - s(-y, 1.9, 2.4));
+  return Math.max(r * taper, 0.02);
 }
 
 function buildGeometry(
-  widthSegments: number,
+  radialSegments: number,
   heightSegments: number,
 ): THREE.BufferGeometry {
-  // Drop UVs and weld the sphere's wrap-around seam, otherwise averaged
-  // normals split down the middle and draw a visible vertical line.
-  const raw = new THREE.SphereGeometry(1, widthSegments, heightSegments);
+  const raw = new THREE.CylinderGeometry(
+    1,
+    1,
+    Y_MAX - Y_MIN,
+    radialSegments,
+    heightSegments,
+    true,
+  );
+  raw.translate(0, (Y_MAX + Y_MIN) / 2, 0);
+  // weld the wrap-around seam so averaged normals don't draw a vertical line
   raw.deleteAttribute("uv");
   raw.deleteAttribute("normal");
   const geometry = mergeVertices(raw);
   const pos = geometry.attributes.position;
   const v = new THREE.Vector3();
-  const n = new THREE.Vector3();
 
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i);
-    n.copy(v).normalize();
-    const r = shapeRadius(n);
-    pos.setXYZ(i, n.x * r * SCALE.x, n.y * r * SCALE.y, n.z * r * SCALE.z);
+    const theta = Math.atan2(v.x, v.z);
+    const sx = Math.sin(theta);
+    const cz = Math.cos(theta);
+    const r = bodyRadius(v.y, sx, cz);
+    pos.setXYZ(i, r * sx, v.y, r * cz);
   }
   geometry.computeVertexNormals();
   return geometry;
 }
 
-function isInside(p: THREE.Vector3): boolean {
-  return depth01(p) > 0;
+function depth01(p: THREE.Vector3): number {
+  if (p.y < Y_MIN || p.y > Y_MAX) return 0;
+  const h = Math.sqrt(p.x * p.x + p.z * p.z);
+  if (h < 1e-6) return 1;
+  const r = bodyRadius(p.y, p.x / h, p.z / h);
+  return THREE.MathUtils.clamp((r - h) / CORE_DEPTH, 0, 1);
 }
 
-/** fraction of the (unit-space) radius considered fully "core" */
-const CORE_DEPTH = 0.55;
-
-function depth01(p: THREE.Vector3): number {
-  const qx = p.x / SCALE.x;
-  const qy = p.y / SCALE.y;
-  const qz = p.z / SCALE.z;
-  const len = Math.sqrt(qx * qx + qy * qy + qz * qz);
-  if (len < 1e-6) return 1;
-  const n = new THREE.Vector3(qx / len, qy / len, qz / len);
-  const depth = shapeRadius(n) - len;
-  return THREE.MathUtils.clamp(depth / CORE_DEPTH, 0, 1);
+function isInside(p: THREE.Vector3): boolean {
+  return depth01(p) > 0;
 }
 
 export function createPlaceholderSpecimen(): Specimen {
@@ -90,10 +115,10 @@ export function createPlaceholderSpecimen(): Specimen {
     sheen: 0.25,
     sheenRoughness: 0.6,
   });
-  const mesh = new THREE.Mesh(buildGeometry(192, 128), material);
+  const mesh = new THREE.Mesh(buildGeometry(192, 200), material);
 
   const proxy = new THREE.Mesh(
-    buildGeometry(48, 32),
+    buildGeometry(48, 60),
     new THREE.MeshBasicMaterial(),
   );
   proxy.updateMatrixWorld(true);

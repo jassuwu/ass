@@ -171,10 +171,12 @@ export function buildLattice(
     const y = rest[a * 3 + 1];
     const back = Math.max(0, 1 - zn * 1.7) ** 1.6;
     const top = 0.6 * THREE.MathUtils.smoothstep(y, 0.45, 1.0);
+    // thighs are musculature: they carry a ripple but barely jiggle
+    const bottom = 0.55 * THREE.MathUtils.smoothstep(-y, 0.85, 1.6);
     const core =
       CORE_HOLD *
       depth01(q.set(rest[a * 3], rest[a * 3 + 1], rest[a * 3 + 2])) ** 1.5;
-    anchorW[a] = Math.min(1, back + top + core);
+    anchorW[a] = Math.min(1, back + top + bottom + core);
   }
 
   // distance constraints
