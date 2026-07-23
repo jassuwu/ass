@@ -1,3 +1,4 @@
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import * as THREE from "three/webgpu";
 import { AudioDirector } from "../audio/director";
 import { Pointer } from "../input/pointer";
@@ -67,6 +68,15 @@ export class App {
     await this.renderer.init();
     this.renderer.toneMapping = THREE.AgXToneMapping;
     this.renderer.toneMappingExposure = 1.15;
+
+    // image-based fill: a dim studio environment gives the soft gradients
+    // and reflections that make skin read as lit by a room, not by three
+    // point lights in a vacuum. Kept low — the void must stay a void.
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const env = pmrem.fromScene(new RoomEnvironment(), 0.04);
+    pmrem.dispose();
+    this.stage.scene.environment = env.texture;
+    this.stage.scene.environmentIntensity = 0.3;
 
     root.appendChild(this.renderer.domElement);
     this.resize();

@@ -18,20 +18,22 @@ export function createStage(): Stage {
   const specimen = createPlaceholderSpecimen();
   scene.add(specimen.mesh);
 
-  const key = new THREE.SpotLight(0xfff0dd, 280);
+  // analytic lights are accents over the PMREM environment fill (set in app
+  // after renderer init — PMREM needs a live renderer)
+  const key = new THREE.SpotLight(0xfff0dd, 230);
   key.position.set(-2.6, 3.4, 4.6);
   key.angle = Math.PI / 3.5;
   key.penumbra = 1;
   key.decay = 2;
   scene.add(key, key.target);
 
-  const rimL = new THREE.DirectionalLight(0xcfdcff, 2.6);
+  const rimL = new THREE.DirectionalLight(0xcfdcff, 2.2);
   rimL.position.set(-4.5, 1.4, -3);
-  const rimR = new THREE.DirectionalLight(0xbfd0f5, 2.1);
+  const rimR = new THREE.DirectionalLight(0xbfd0f5, 1.8);
   rimR.position.set(4.5, 0.6, -3);
   scene.add(rimL, rimL.target, rimR, rimR.target);
 
-  scene.add(new THREE.HemisphereLight(0x2a2622, 0x05050a, 0.35));
+  scene.add(new THREE.HemisphereLight(0x2a2622, 0x05050a, 0.12));
 
   return { scene, specimen };
 }
