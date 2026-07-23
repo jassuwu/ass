@@ -5,12 +5,14 @@ import { ao } from "three/addons/tsl/display/GTAONode.js";
 import {
   Fn,
   float,
+  mix,
   mrt,
   normalView,
   output,
   pass,
   screenUV,
   uniform,
+  vec3,
   vec4,
 } from "three/tsl";
 import * as THREE from "three/webgpu";
@@ -48,7 +50,13 @@ export class Pipeline {
       camera,
     );
     aoPass.radius.value = 0.4;
-    const occluded = color.mul(aoPass.getTextureNode());
+    // skin cavities don't just darken — light surviving multiple subsurface
+    // bounces comes back dimmer AND redder. Grading the AO term this way is
+    // the film-lookdev trick that makes crevices read as flesh, not concrete.
+    const aoT = aoPass.getTextureNode();
+    const occluded = color.mul(
+      vec4(mix(vec3(0.52, 0.3, 0.26), vec3(1, 1, 1), aoT.x), 1),
+    );
 
     // bloom on the sharp frame, then defocus the sum — highlights halo
     // before they blur, which is how a lens does it. Restrained: only true
@@ -66,6 +74,9 @@ export class Pipeline {
 
     const vignetted = Fn(() => {
       const c = vec4(focused).toVar();
+      // white balance: the warm HDRI x warm key compounds into a salmon
+      // cast on everything — pull the frame back to neutral, like a camera
+      c.rgb.mulAssign(vec3(0.9, 1.03, 1.1));
       const dist = screenUV.sub(0.5).length();
       const falloff = float(1).sub(dist.mul(dist).mul(0.7)).clamp(0.25, 1);
       c.rgb.mulAssign(falloff);

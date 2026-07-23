@@ -14,7 +14,7 @@ import { KillCam } from "../scene/kill-cam";
 import { createStage, type Stage } from "../scene/stage";
 import { maybeAttachDevGui } from "./dev-gui";
 
-const LATTICE_SPACING = 0.15;
+const LATTICE_SPACING = 0.17;
 
 export class App {
   private renderer = new THREE.WebGPURenderer({ antialias: true });
@@ -111,7 +111,7 @@ export class App {
   private resize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 3));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h);
     this.rig.setAspect(w / h);
     this.killCam.setAspect(w / h);

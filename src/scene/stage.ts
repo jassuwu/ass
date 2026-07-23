@@ -20,7 +20,7 @@ export function createStage(): Stage {
 
   // analytic lights are accents over the PMREM environment fill (set in app
   // after renderer init — PMREM needs a live renderer)
-  const key = new THREE.SpotLight(0xfff0dd, 230);
+  const key = new THREE.SpotLight(0xfff8f0, 230);
   key.position.set(-2.6, 3.4, 4.6);
   key.angle = Math.PI / 3.5;
   key.penumbra = 1;

@@ -290,7 +290,7 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
 
 export function createPlaceholderSpecimen(): Specimen {
   const mesh = new THREE.Mesh(
-    surfaceNets(bodySdf, BOUNDS_MIN, BOUNDS_MAX, 0.022),
+    surfaceNets(bodySdf, BOUNDS_MIN, BOUNDS_MAX, 0.026),
     createSkinMaterial(),
   );
   mesh.castShadow = true;
