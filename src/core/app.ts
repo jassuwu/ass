@@ -105,7 +105,7 @@ export class App {
     this.resize();
     window.addEventListener("resize", () => this.resize());
     this.renderer.setAnimationLoop(() => this.tick());
-    void maybeAttachDevGui(this.solver, this.slap, this.ripples);
+    void maybeAttachDevGui(this.solver, this.slap, this.ripples, this.pipeline);
   }
 
   private resize(): void {

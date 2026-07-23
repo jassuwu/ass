@@ -1,6 +1,7 @@
 import type { SlapInteraction } from "../interaction/slap";
 import type { RippleField } from "../physics/ripples";
 import type { XpbdSolver } from "../physics/solver";
+import type { Pipeline } from "../render/pipeline";
 
 /**
  * Tuning bench, dev only: append ?dev to the URL. Dynamically imported so
@@ -10,6 +11,7 @@ export async function maybeAttachDevGui(
   solver: XpbdSolver,
   slap: SlapInteraction,
   ripples: RippleField,
+  pipeline: Pipeline | null,
 ): Promise<void> {
   if (!new URLSearchParams(window.location.search).has("dev")) return;
   const { default: GUI } = await import("lil-gui");
@@ -33,6 +35,14 @@ export async function maybeAttachDevGui(
   i.add(slap.params, "brushRadius", 0.05, 0.8);
   i.add(slap.params, "grabRadius", 0.2, 1.2);
   i.add(slap.params, "maxPull", 0.1, 1);
+
+  if (pipeline) {
+    const g = gui.addFolder("grade");
+    g.add(pipeline.whiteBalance.value, "x", 0.5, 1.5).name("red");
+    g.add(pipeline.whiteBalance.value, "y", 0.5, 1.5).name("green");
+    g.add(pipeline.whiteBalance.value, "z", 0.5, 1.5).name("blue");
+    g.add(pipeline.bokehScale, "value", 0, 4).name("bokeh");
+  }
 
   const r = gui.addFolder("ripples");
   r.add(ripples.params, "speed", 0.5, 6);

@@ -27,6 +27,8 @@ export class Pipeline {
   /** world-space focus distance, updated per frame */
   readonly focusDistance = uniform(6.5);
   readonly bokehScale = uniform(1.0);
+  /** per-channel white balance, dialable from the dev bench */
+  readonly whiteBalance = uniform(new THREE.Vector3(0.9, 1.03, 1.1));
   private readonly pipeline: THREE.RenderPipeline;
 
   constructor(
@@ -76,7 +78,7 @@ export class Pipeline {
       const c = vec4(focused).toVar();
       // white balance: the warm HDRI x warm key compounds into a salmon
       // cast on everything — pull the frame back to neutral, like a camera
-      c.rgb.mulAssign(vec3(0.9, 1.03, 1.1));
+      c.rgb.mulAssign(this.whiteBalance);
       const dist = screenUV.sub(0.5).length();
       const falloff = float(1).sub(dist.mul(dist).mul(0.7)).clamp(0.25, 1);
       c.rgb.mulAssign(falloff);
