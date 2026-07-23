@@ -75,6 +75,38 @@ export class AudioDirector {
     playSlap(g, power01);
   }
 
+  /**
+   * kill-cam impact: foley stretched and dropped into the abyss, the room
+   * gone silent, a sub swell underneath — then the world fades back in.
+   * @param durationS real-time length of the slow-motion sequence
+   */
+  impactCinema(power01: number, durationS: number): void {
+    const g = this.engine.current;
+    if (!g) return;
+    this.nextBeat = 0;
+    const { ctx, dry } = g;
+    const t = ctx.currentTime;
+
+    playSlap(g, power01, 4);
+
+    if (this.roomGain) {
+      this.roomGain.gain.setTargetAtTime(0.03, t, 0.12);
+      this.roomGain.gain.setTargetAtTime(1, t + durationS, 0.4);
+    }
+
+    // sub swell under the held moment
+    const sub = ctx.createOscillator();
+    sub.type = "sine";
+    sub.frequency.value = 28;
+    const subGain = ctx.createGain();
+    subGain.gain.setValueAtTime(0.0001, t);
+    subGain.gain.exponentialRampToValueAtTime(0.16, t + durationS * 0.4);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, t + durationS);
+    sub.connect(subGain).connect(dry);
+    sub.start(t);
+    sub.stop(t + durationS + 0.1);
+  }
+
   /** call every frame with the current hold charge (0..1) */
   update(charge: number): void {
     const g = this.engine.current;

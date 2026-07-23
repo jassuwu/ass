@@ -38,8 +38,10 @@ export class SlapInteraction {
   readonly params: SlapParams;
   /** 0..1 while holding, for the audio/visual layers to observe */
   charge = 0;
-  /** fired on delivered impact with normalized power 0..1 */
-  onImpact: ((power01: number) => void) | null = null;
+  /** fired on delivered impact with normalized power 0..1, point and direction */
+  onImpact:
+    | ((power01: number, point: THREE.Vector3, dir: THREE.Vector3) => void)
+    | null = null;
 
   private readonly camera: THREE.Camera;
   private readonly proxy: THREE.Mesh;
@@ -109,7 +111,11 @@ export class SlapInteraction {
     const power = p.tapPower + curve * p.chargeBonus;
     const radius = p.radius + curve * p.chargeRadiusBonus;
     this.solver.impulse(hit.point, this.raycaster.ray.direction, power, radius);
-    this.onImpact?.(power / (p.tapPower + p.chargeBonus));
+    this.onImpact?.(
+      power / (p.tapPower + p.chargeBonus),
+      hit.point,
+      this.raycaster.ray.direction,
+    );
   }
 
   private onMove(e: PointerEvent): void {

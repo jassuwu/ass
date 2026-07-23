@@ -6,6 +6,7 @@ import { buildLattice } from "../physics/lattice";
 import { MeshSkin } from "../physics/skin";
 import { XpbdSolver } from "../physics/solver";
 import { CameraRig } from "../scene/camera-rig";
+import { KillCam } from "../scene/kill-cam";
 import { createStage, type Stage } from "../scene/stage";
 import { maybeAttachDevGui } from "./dev-gui";
 
@@ -21,6 +22,7 @@ export class App {
   private skin: MeshSkin;
   private slap: SlapInteraction;
   private audio = new AudioDirector();
+  private killCam = new KillCam();
 
   constructor() {
     const { specimen } = this.stage;
@@ -47,7 +49,15 @@ export class App {
       specimen.proxy,
       this.solver,
     );
-    this.slap.onImpact = (power01) => this.audio.impact(power01);
+    this.slap.onImpact = (power01, point, dir) => {
+      // a full charge earns the kill cam — unannounced, undocumented
+      if (power01 >= 0.95 && this.killCam.idle) {
+        this.killCam.trigger(this.rig, point, dir);
+        this.audio.impactCinema(power01, 3);
+      } else {
+        this.audio.impact(power01);
+      }
+    };
   }
 
   async start(root: HTMLElement): Promise<void> {
@@ -68,6 +78,7 @@ export class App {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h);
     this.rig.setAspect(w / h);
+    this.killCam.setAspect(w / h);
   }
 
   private tick(): void {
@@ -77,9 +88,11 @@ export class App {
     const dt = THREE.MathUtils.clamp(this.timer.getDelta(), 1 / 240, 1 / 30);
     this.slap.update();
     this.audio.update(this.slap.charge);
-    this.solver.step(dt);
+    this.killCam.update(dt, this.rig);
+    this.solver.step(dt * this.killCam.timeScale);
     this.skin.apply(this.solver);
     this.rig.update(dt, this.pointer);
-    this.renderer.render(this.stage.scene, this.rig.camera);
+    const camera = this.killCam.active ? this.killCam.camera : this.rig.camera;
+    this.renderer.render(this.stage.scene, camera);
   }
 }
