@@ -9,13 +9,13 @@ import type { Pointer } from "../input/pointer";
 const FRAME = {
   fovDeg: 20,
   /** world-space width the frame shows at the subject plane */
-  frameWidth: 3.4,
+  frameWidth: 3.0,
   /**
    * minimum world-space height the frame must show — stops the subject
    * bursting the frame on ultrawide monitors. Slightly less than the
    * subject's height so the sketch's top/bottom crop is preserved.
    */
-  minFrameHeight: 1.95,
+  minFrameHeight: 1.8,
   /** composition center */
   target: new THREE.Vector3(0, 0, 0),
   /** max parallax, radians */
