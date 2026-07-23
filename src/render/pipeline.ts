@@ -1,7 +1,18 @@
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { dof } from "three/addons/tsl/display/DepthOfFieldNode.js";
 import { film } from "three/addons/tsl/display/FilmNode.js";
-import { Fn, float, pass, screenUV, uniform, vec4 } from "three/tsl";
+import { ao } from "three/addons/tsl/display/GTAONode.js";
+import {
+  Fn,
+  float,
+  mrt,
+  normalView,
+  output,
+  pass,
+  screenUV,
+  uniform,
+  vec4,
+} from "three/tsl";
 import * as THREE from "three/webgpu";
 
 /**
@@ -24,13 +35,25 @@ export class Pipeline {
     this.pipeline = new THREE.RenderPipeline(renderer);
 
     const scenePass = pass(scene, camera);
+    scenePass.setMRT(mrt({ output, normal: normalView }));
     const color = scenePass.getTextureNode("output");
     const viewZ = scenePass.getViewZNode();
+
+    // ground-truth ambient occlusion: contact darkening in the crease, the
+    // fold, between the legs — the second ray-traced-look ingredient after
+    // shadow maps (screen-space, but honest about geometry)
+    const aoPass = ao(
+      scenePass.getTextureNode("depth"),
+      scenePass.getTextureNode("normal"),
+      camera,
+    );
+    aoPass.radius.value = 0.4;
+    const occluded = color.mul(aoPass.getTextureNode());
 
     // bloom on the sharp frame, then defocus the sum — highlights halo
     // before they blur, which is how a lens does it. Restrained: only true
     // highlights may glow, and only barely.
-    const bloomed = color.add(bloom(color, 0.06, 0.18, 0.96));
+    const bloomed = occluded.add(bloom(occluded, 0.06, 0.18, 0.96));
     // @types/three declares dof() as a bare class with no node value type;
     // at runtime it is a vec4-producing TSL node
     const focused = dof(

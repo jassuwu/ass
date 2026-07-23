@@ -11,7 +11,6 @@ import {
   vec3,
 } from "three/tsl";
 import * as THREE from "three/webgpu";
-import { bakeSkinTextures } from "../render/skin-textures";
 import { surfaceNets } from "./surface-nets";
 
 export interface Specimen {
@@ -44,6 +43,11 @@ const BOUNDS_MAX = new THREE.Vector3(1.6, 2.2, 1.4);
 function smin(a: number, b: number, k: number): number {
   const h = Math.min(Math.max(0.5 + (0.5 * (b - a)) / k, 0), 1);
   return b * (1 - h) + a * h - k * h * (1 - h);
+}
+
+/** smooth subtraction — carves b out of a with soft edges */
+function smax(a: number, b: number, k: number): number {
+  return -smin(-a, -b, k);
 }
 
 function sdEllipsoid(
@@ -158,6 +162,12 @@ export function bodySdf(x: number, y: number, z: number): number {
   // small blend radius at the thigh junction forms the gluteal fold;
   // plain min between the legs keeps them separate
   d = smin(d, Math.min(sdLeg(x, y, z, -1), sdLeg(x, y, z, 1)), 0.13);
+
+  // the cleft: a deep narrow carve along the midline of the camera side.
+  // The depth is the concealment — the interior sits in full shadow
+  // (shadow map + GTAO), so it reads real while showing nothing at all.
+  const cleft = sdEllipsoid(x, y, z, 0, -0.25, 0.9, 0.075, 0.7, 0.6);
+  d = smax(d, -cleft, 0.05);
   return d;
 }
 
@@ -180,9 +190,11 @@ function isInside(p: THREE.Vector3): boolean {
 }
 
 /**
- * Skin, procedurally: no UVs exist yet (they arrive with the sculpted
- * asset), so every map is a function of world position — which conveniently
- * also survives deformation without stretching.
+ * Skin from a real scan (TextureCan skin_0001, 2K: color/normal/roughness/
+ * ao/subsurface), triplanar-sampled since the SDF mesh has no UVs — which
+ * also means the maps survive deformation without stretching. Our broad
+ * procedural tonal gradients tint the scan so the hue stays authored while
+ * the pore-level structure is photographic.
  */
 function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
   const material = new THREE.MeshPhysicalNodeMaterial({
@@ -191,8 +203,35 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
     sheenColor: new THREE.Color(0xffdcc8),
   });
 
-  // albedo: warm base with two scales of mottling — broad tonal drift and
-  // a finer capillary flush. Skin is never one color, and never near-white.
+  const loader = new THREE.TextureLoader();
+  const load = (name: string, srgb = false): THREE.Texture => {
+    const t = loader.load(`/textures/skin/${name}`);
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.anisotropy = 8;
+    return t;
+  };
+  const scanColor = load("skin_0001_color_2k.jpg", true);
+  const scanNormal = load("skin_0001_normal_2k.jpg");
+  const scanRough = load("skin_0001_roughness_2k.jpg");
+  const scanSss = load("skin_0001_subsurface_2k.jpg");
+
+  // ~0.6 world units (~8cm) per tile matches the scan's real-world scale
+  const uvScale = 1.6;
+  const w = normalWorld.abs().pow(4);
+  const wSum = w.x.add(w.y).add(w.z);
+  const wx = w.x.div(wSum);
+  const wy = w.y.div(wSum);
+  const wz = w.z.div(wSum);
+  const tp = (map: THREE.Texture) =>
+    texture(map, positionWorld.zy.mul(uvScale))
+      .mul(wx)
+      .add(texture(map, positionWorld.xz.mul(uvScale)).mul(wy))
+      .add(texture(map, positionWorld.xy.mul(uvScale)).mul(wz));
+
+  // albedo: authored tonal gradients tint the scan's photographic detail.
+  // Skin is never one color, and never near-white.
   const base = color(0xb98a70);
   const flushed = color(0xa76b59);
   const pale = color(0xc9a184);
@@ -200,54 +239,31 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
     .mul(0.5)
     .add(0.5);
   const fine = mx_fractal_noise_float(positionWorld.mul(6.5)).mul(0.5).add(0.5);
-  material.colorNode = mix(
-    mix(base, pale, broad.mul(0.35)),
-    flushed,
-    fine.mul(0.22),
-  );
+  const tint = mix(mix(base, pale, broad.mul(0.35)), flushed, fine.mul(0.22));
+  material.colorNode = tint.mul(tp(scanColor).rgb).mul(1.6);
 
-  // micro-detail: baked pore/fold maps, sampled triplanar (no UVs needed).
-  // ~0.55 world units per tile puts pore spacing at believable screen scale.
-  const detail = bakeSkinTextures();
-  const uvScale = 3.2;
-  const w = normalWorld.abs().pow(4);
-  const wSum = w.x.add(w.y).add(w.z);
-  const wx = w.x.div(wSum);
-  const wy = w.y.div(wSum);
-  const wz = w.z.div(wSum);
-
+  // scanned normals, UDN triplanar blend
   const decode = (t: ReturnType<typeof texture>) => t.xy.mul(2).sub(1);
-  const nX = decode(texture(detail.normalMap, positionWorld.zy.mul(uvScale)));
-  const nY = decode(texture(detail.normalMap, positionWorld.xz.mul(uvScale)));
-  const nZ = decode(texture(detail.normalMap, positionWorld.xy.mul(uvScale)));
-  // UDN-style triplanar blend: each projection perturbs its own plane axes
+  const nX = decode(texture(scanNormal, positionWorld.zy.mul(uvScale)));
+  const nY = decode(texture(scanNormal, positionWorld.xz.mul(uvScale)));
+  const nZ = decode(texture(scanNormal, positionWorld.xy.mul(uvScale)));
   const perturb = vec3(float(0), nX.y, nX.x)
     .mul(wx)
     .add(vec3(nY.x, float(0), nY.y).mul(wy))
     .add(vec3(nZ.x, nZ.y, float(0)).mul(wz))
-    .mul(0.32);
+    .mul(0.5);
   material.normalNode = transformNormalToView(
     normalWorld.add(perturb).normalize(),
   );
 
-  const dX = texture(detail.detailMap, positionWorld.zy.mul(uvScale));
-  const dY = texture(detail.detailMap, positionWorld.xz.mul(uvScale));
-  const dZ = texture(detail.detailMap, positionWorld.xy.mul(uvScale));
-  const det = dX.mul(wx).add(dY.mul(wy)).add(dZ.mul(wz));
+  material.roughnessNode = tp(scanRough).r.mul(0.6).add(0.22);
 
-  // pores sit in slight shadow — modulate albedo by the baked ao
-  material.colorNode = material.colorNode?.mul(det.r.mul(0.18).add(0.82));
-
-  // spec breakup: baked micro-roughness over broad procedural drift
-  material.roughnessNode = float(0.42)
-    .add(mx_fractal_noise_float(positionWorld.mul(22)).mul(0.07))
-    .add(det.g.sub(0.5).mul(0.3));
-
-  // faked subsurface: deep red bleeding out at grazing angles, strongest
-  // where the silhouette thins against the rim lights
+  // faked subsurface: deep red bleeding out at grazing angles, gated by the
+  // scan's subsurface/thickness map so it varies like real tissue
   const viewDir = cameraPosition.sub(positionWorld).normalize();
   const fresnel = normalWorld.dot(viewDir).clamp(0, 1).oneMinus().pow(3);
-  material.emissiveNode = color(0x3d0d05).mul(fresnel).mul(0.55);
+  const sssMask = tp(scanSss).r.mul(0.8).add(0.2);
+  material.emissiveNode = color(0x3d0d05).mul(fresnel).mul(sssMask).mul(0.55);
 
   return material;
 }
