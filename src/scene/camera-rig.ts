@@ -1,5 +1,5 @@
-import * as THREE from 'three/webgpu';
-import type { Pointer } from '../input/pointer';
+import * as THREE from "three/webgpu";
+import type { Pointer } from "../input/pointer";
 
 /**
  * The single authored frame. There is no user navigation — only cursor
@@ -34,7 +34,8 @@ export class CameraRig {
     this.camera.updateProjectionMatrix();
     // Solve distance from the horizontal FOV so the subject's width coverage
     // is identical on every screen — the composition is authored, not fitted.
-    const halfWidth = Math.tan(THREE.MathUtils.degToRad(FRAME.fovDeg) / 2) * aspect;
+    const halfWidth =
+      Math.tan(THREE.MathUtils.degToRad(FRAME.fovDeg) / 2) * aspect;
     this.baseDistance = FRAME.frameWidth / (2 * halfWidth);
   }
 
@@ -44,7 +45,9 @@ export class CameraRig {
     this.yaw += (pointer.x * FRAME.yawRange - this.yaw) * k;
     this.pitch += (pointer.y * FRAME.pitchRange - this.pitch) * k;
 
-    const breathe = Math.sin((this.elapsed * Math.PI * 2) / FRAME.breathePeriodS) * FRAME.breatheAmp;
+    const breathe =
+      Math.sin((this.elapsed * Math.PI * 2) / FRAME.breathePeriodS) *
+      FRAME.breatheAmp;
     const d = this.baseDistance + breathe;
 
     const t = FRAME.target;

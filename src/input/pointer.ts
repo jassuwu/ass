@@ -4,7 +4,7 @@ export class Pointer {
   y = 0;
 
   constructor() {
-    window.addEventListener('pointermove', (e: PointerEvent) => {
+    window.addEventListener("pointermove", (e: PointerEvent) => {
       this.x = (e.clientX / window.innerWidth) * 2 - 1;
       this.y = -((e.clientY / window.innerHeight) * 2 - 1);
     });
