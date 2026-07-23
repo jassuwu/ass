@@ -151,16 +151,26 @@ export function bodySdf(x: number, y: number, z: number): number {
   // convex surfaces in contact. No gap, no channel, no visible floor: the
   // concealment IS the contact. The crease line is the intersection curve,
   // deepest at mid-height, fading naturally above and below.
-  const gluteL = sdEllipsoid(x, y, z, -0.58, -0.05, 0.3, 0.8, 0.8, 0.84);
-  const gluteR = sdEllipsoid(x, y, z, 0.58, -0.05, 0.3, 0.8, 0.8, 0.84);
+  const gluteL = sdEllipsoid(x, y, z, -0.58, -0.05, 0.3, 0.8, 0.8, 0.86);
+  const gluteR = sdEllipsoid(x, y, z, 0.58, -0.05, 0.3, 0.8, 0.8, 0.86);
 
   // waist emerges from the pelvis/torso blend
   let d = smin(pelvis, torso, 0.4);
-  d = smin(d, smin(gluteL, gluteR, 0.03), 0.32);
+  d = smin(d, smin(gluteL, gluteR, 0.055), 0.32);
   // small blend radius at the thigh junction forms the gluteal fold;
   // plain min between the legs keeps them separate
   d = smin(d, Math.min(sdLeg(x, y, z, -1), sdLeg(x, y, z, 1)), 0.13);
-  return d;
+
+  // pressure ring: flesh pressed against flesh swells BESIDE the contact
+  // line (never on it — the ring is zero at the seam), so the crease gains
+  // real depth with walls that read as squeezed, not glued
+  const ring = Math.exp(-((x / 0.3) ** 2)) * (1 - Math.exp(-((x / 0.08) ** 2)));
+  const press =
+    0.12 *
+    ring *
+    Math.exp(-(((y + 0.1) / 0.75) ** 2)) *
+    THREE.MathUtils.smoothstep(z, 0.15, 0.75);
+  return d - press;
 }
 
 function depth01(p: THREE.Vector3): number {
@@ -204,13 +214,13 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
     t.wrapS = THREE.RepeatWrapping;
     t.wrapT = THREE.RepeatWrapping;
     t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-    t.anisotropy = 8;
+    t.anisotropy = 16;
     return t;
   };
-  const scanColor = load("skin_0001_color_2k.jpg", true);
-  const scanNormal = load("skin_0001_normal_2k.jpg");
-  const scanRough = load("skin_0001_roughness_2k.jpg");
-  const scanSss = load("skin_0001_subsurface_2k.jpg");
+  const scanColor = load("skin_0001_color_4k.jpg", true);
+  const scanNormal = load("skin_0001_normal_4k.jpg");
+  const scanRough = load("skin_0001_roughness_4k.jpg");
+  const scanSss = load("skin_0001_subsurface_4k.jpg");
 
   // ~0.6 world units (~8cm) per tile matches the scan's real-world scale;
   // a second octave at ~3.5x adds the micro grain a single tile can't hold
@@ -230,16 +240,19 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
   // albedo: authored tonal gradients carry the HUE; the scan contributes
   // LUMINANCE detail only. Multiplying skin color by skin color squares the
   // saturation into terracotta — never do that.
-  const base = color(0xb98a70);
-  const flushed = color(0xa76b59);
-  const pale = color(0xc9a184);
+  const base = color(0xc9a087);
+  const flushed = color(0xb98676);
+  const pale = color(0xd8b59e);
   const broad = mx_fractal_noise_float(positionWorld.mul(1.4))
     .mul(0.5)
     .add(0.5);
   const fine = mx_fractal_noise_float(positionWorld.mul(6.5)).mul(0.5).add(0.5);
   const tint = mix(mix(base, pale, broad.mul(0.35)), flushed, fine.mul(0.22));
+  // the scan samples in LINEAR space here — its average sits near 0.35,
+  // so the normalization factor is ~2.8, not ~1.5 (getting this wrong
+  // darkens the albedo 40% and the whole frame collapses into deep red)
   const scanLum = tp(scanColor, uvScale).rgb.dot(vec3(0.299, 0.587, 0.114));
-  material.colorNode = tint.mul(scanLum.mul(1.55).clamp(0.6, 1.4));
+  material.colorNode = tint.mul(scanLum.mul(2.8).clamp(0.65, 1.4));
 
   // scanned normals, UDN triplanar blend, two octaves
   const decode = (t: ReturnType<typeof texture>) => t.xy.mul(2).sub(1);
@@ -270,14 +283,14 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
   const viewDir = cameraPosition.sub(positionWorld).normalize();
   const fresnel = normalWorld.dot(viewDir).clamp(0, 1).oneMinus().pow(3);
   const sssMask = tp(scanSss, uvScale).r.mul(0.8).add(0.2);
-  material.emissiveNode = color(0x3d0d05).mul(fresnel).mul(sssMask).mul(0.55);
+  material.emissiveNode = color(0x3d0d05).mul(fresnel).mul(sssMask).mul(0.35);
 
   return material;
 }
 
 export function createPlaceholderSpecimen(): Specimen {
   const mesh = new THREE.Mesh(
-    surfaceNets(bodySdf, BOUNDS_MIN, BOUNDS_MAX, 0.032),
+    surfaceNets(bodySdf, BOUNDS_MIN, BOUNDS_MAX, 0.022),
     createSkinMaterial(),
   );
   mesh.castShadow = true;

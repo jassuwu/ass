@@ -26,7 +26,7 @@ export function createStage(): Stage {
   key.penumbra = 1;
   key.decay = 2;
   key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.mapSize.set(4096, 4096);
   key.shadow.camera.near = 1;
   key.shadow.camera.far = 15;
   key.shadow.bias = -0.0002;
