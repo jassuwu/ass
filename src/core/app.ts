@@ -15,7 +15,7 @@ export class App {
   private stage: Stage = createStage();
   private rig = new CameraRig();
   private pointer = new Pointer();
-  private clock = new THREE.Clock();
+  private timer = new THREE.Timer();
   private solver: XpbdSolver;
   private skin: MeshSkin;
   private slap: SlapInteraction;
@@ -70,7 +70,8 @@ export class App {
   private tick(): void {
     // lower bound matters: a first-frame dt of exactly 0 would make the
     // substep h=0 and the velocity update (pos-prev)/h NaN the whole lattice
-    const dt = THREE.MathUtils.clamp(this.clock.getDelta(), 1 / 240, 1 / 30);
+    this.timer.update();
+    const dt = THREE.MathUtils.clamp(this.timer.getDelta(), 1 / 240, 1 / 30);
     this.slap.update();
     this.solver.step(dt);
     this.skin.apply(this.solver);
