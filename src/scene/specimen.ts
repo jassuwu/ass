@@ -45,11 +45,6 @@ function smin(a: number, b: number, k: number): number {
   return b * (1 - h) + a * h - k * h * (1 - h);
 }
 
-/** smooth subtraction — carves b out of a with soft edges */
-function smax(a: number, b: number, k: number): number {
-  return -smin(-a, -b, k);
-}
-
 function sdEllipsoid(
   px: number,
   py: number,
@@ -152,22 +147,19 @@ function sdLeg(x: number, y: number, z: number, side: number): number {
 export function bodySdf(x: number, y: number, z: number): number {
   const pelvis = sdEllipsoid(x, y, z, 0, 0.5, -0.15, 1.25, 0.75, 0.9);
   const torso = sdEllipsoid(x, y, z, 0, 1.7, -0.18, 1.0, 1.3, 0.8);
-  const gluteL = sdEllipsoid(x, y, z, -0.62, -0.05, 0.3, 0.78, 0.78, 0.82);
-  const gluteR = sdEllipsoid(x, y, z, 0.62, -0.05, 0.3, 0.78, 0.78, 0.82);
+  // the cheeks overlap deeply and meet at a near-hard crease — two pressed
+  // convex surfaces in contact. No gap, no channel, no visible floor: the
+  // concealment IS the contact. The crease line is the intersection curve,
+  // deepest at mid-height, fading naturally above and below.
+  const gluteL = sdEllipsoid(x, y, z, -0.58, -0.05, 0.3, 0.8, 0.8, 0.84);
+  const gluteR = sdEllipsoid(x, y, z, 0.58, -0.05, 0.3, 0.8, 0.8, 0.84);
 
   // waist emerges from the pelvis/torso blend
   let d = smin(pelvis, torso, 0.4);
-  // tight blend between the cheeks keeps the crease a real valley
-  d = smin(d, smin(gluteL, gluteR, 0.08), 0.32);
+  d = smin(d, smin(gluteL, gluteR, 0.03), 0.32);
   // small blend radius at the thigh junction forms the gluteal fold;
   // plain min between the legs keeps them separate
   d = smin(d, Math.min(sdLeg(x, y, z, -1), sdLeg(x, y, z, 1)), 0.13);
-
-  // the cleft: a deep narrow carve along the midline of the camera side.
-  // The depth is the concealment — the interior sits in full shadow
-  // (shadow map + GTAO), so it reads real while showing nothing at all.
-  const cleft = sdEllipsoid(x, y, z, 0, -0.25, 0.9, 0.075, 0.7, 0.6);
-  d = smax(d, -cleft, 0.05);
   return d;
 }
 
@@ -201,6 +193,9 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
     sheen: 0.2,
     sheenRoughness: 0.6,
     sheenColor: new THREE.Color(0xffdcc8),
+    // the thin oily top layer of skin: a faint tight second highlight
+    clearcoat: 0.08,
+    clearcoatRoughness: 0.35,
   });
 
   const loader = new THREE.TextureLoader();
@@ -217,21 +212,24 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
   const scanRough = load("skin_0001_roughness_2k.jpg");
   const scanSss = load("skin_0001_subsurface_2k.jpg");
 
-  // ~0.6 world units (~8cm) per tile matches the scan's real-world scale
+  // ~0.6 world units (~8cm) per tile matches the scan's real-world scale;
+  // a second octave at ~3.5x adds the micro grain a single tile can't hold
   const uvScale = 1.6;
+  const uvScale2 = 5.6;
   const w = normalWorld.abs().pow(4);
   const wSum = w.x.add(w.y).add(w.z);
   const wx = w.x.div(wSum);
   const wy = w.y.div(wSum);
   const wz = w.z.div(wSum);
-  const tp = (map: THREE.Texture) =>
-    texture(map, positionWorld.zy.mul(uvScale))
+  const tp = (map: THREE.Texture, scale: number) =>
+    texture(map, positionWorld.zy.mul(scale))
       .mul(wx)
-      .add(texture(map, positionWorld.xz.mul(uvScale)).mul(wy))
-      .add(texture(map, positionWorld.xy.mul(uvScale)).mul(wz));
+      .add(texture(map, positionWorld.xz.mul(scale)).mul(wy))
+      .add(texture(map, positionWorld.xy.mul(scale)).mul(wz));
 
-  // albedo: authored tonal gradients tint the scan's photographic detail.
-  // Skin is never one color, and never near-white.
+  // albedo: authored tonal gradients carry the HUE; the scan contributes
+  // LUMINANCE detail only. Multiplying skin color by skin color squares the
+  // saturation into terracotta — never do that.
   const base = color(0xb98a70);
   const flushed = color(0xa76b59);
   const pale = color(0xc9a184);
@@ -240,29 +238,38 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
     .add(0.5);
   const fine = mx_fractal_noise_float(positionWorld.mul(6.5)).mul(0.5).add(0.5);
   const tint = mix(mix(base, pale, broad.mul(0.35)), flushed, fine.mul(0.22));
-  material.colorNode = tint.mul(tp(scanColor).rgb).mul(1.6);
+  const scanLum = tp(scanColor, uvScale).rgb.dot(vec3(0.299, 0.587, 0.114));
+  material.colorNode = tint.mul(scanLum.mul(1.55).clamp(0.6, 1.4));
 
-  // scanned normals, UDN triplanar blend
+  // scanned normals, UDN triplanar blend, two octaves
   const decode = (t: ReturnType<typeof texture>) => t.xy.mul(2).sub(1);
-  const nX = decode(texture(scanNormal, positionWorld.zy.mul(uvScale)));
-  const nY = decode(texture(scanNormal, positionWorld.xz.mul(uvScale)));
-  const nZ = decode(texture(scanNormal, positionWorld.xy.mul(uvScale)));
-  const perturb = vec3(float(0), nX.y, nX.x)
-    .mul(wx)
-    .add(vec3(nY.x, float(0), nY.y).mul(wy))
-    .add(vec3(nZ.x, nZ.y, float(0)).mul(wz))
-    .mul(0.5);
+  const octave = (scale: number, strength: number) => {
+    const nX = decode(texture(scanNormal, positionWorld.zy.mul(scale)));
+    const nY = decode(texture(scanNormal, positionWorld.xz.mul(scale)));
+    const nZ = decode(texture(scanNormal, positionWorld.xy.mul(scale)));
+    return vec3(float(0), nX.y, nX.x)
+      .mul(wx)
+      .add(vec3(nY.x, float(0), nY.y).mul(wy))
+      .add(vec3(nZ.x, nZ.y, float(0)).mul(wz))
+      .mul(strength);
+  };
   material.normalNode = transformNormalToView(
-    normalWorld.add(perturb).normalize(),
+    normalWorld
+      .add(octave(uvScale, 0.65))
+      .add(octave(uvScale2, 0.3))
+      .normalize(),
   );
 
-  material.roughnessNode = tp(scanRough).r.mul(0.6).add(0.22);
+  material.roughnessNode = tp(scanRough, uvScale)
+    .r.mul(0.42)
+    .add(tp(scanRough, uvScale2).r.mul(0.24))
+    .add(0.16);
 
   // faked subsurface: deep red bleeding out at grazing angles, gated by the
   // scan's subsurface/thickness map so it varies like real tissue
   const viewDir = cameraPosition.sub(positionWorld).normalize();
   const fresnel = normalWorld.dot(viewDir).clamp(0, 1).oneMinus().pow(3);
-  const sssMask = tp(scanSss).r.mul(0.8).add(0.2);
+  const sssMask = tp(scanSss, uvScale).r.mul(0.8).add(0.2);
   material.emissiveNode = color(0x3d0d05).mul(fresnel).mul(sssMask).mul(0.55);
 
   return material;

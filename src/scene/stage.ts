@@ -35,9 +35,11 @@ export function createStage(): Stage {
   key.shadow.normalBias = 0.03;
   scene.add(key, key.target);
 
-  const rimL = new THREE.DirectionalLight(0xcfdcff, 2.2);
+  // cool rims carry the chromatic contrast against the warm key — without
+  // them the frame collapses into monochrome
+  const rimL = new THREE.DirectionalLight(0xcfdcff, 3.2);
   rimL.position.set(-4.5, 1.4, -3);
-  const rimR = new THREE.DirectionalLight(0xbfd0f5, 1.8);
+  const rimR = new THREE.DirectionalLight(0xbfd0f5, 2.6);
   rimR.position.set(4.5, 0.6, -3);
   scene.add(rimL, rimL.target, rimR, rimR.target);
 

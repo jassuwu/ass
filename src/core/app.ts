@@ -86,7 +86,7 @@ export class App {
       const hdr = await new RGBELoader().loadAsync("/env/studio.hdr");
       hdr.mapping = THREE.EquirectangularReflectionMapping;
       this.stage.scene.environment = hdr;
-      this.stage.scene.environmentIntensity = 0.28;
+      this.stage.scene.environmentIntensity = 0.32;
     } catch {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
       const env = pmrem.fromScene(new RoomEnvironment(), 0.04);
