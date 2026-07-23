@@ -3,11 +3,12 @@ import type { XpbdSolver } from "../physics/solver";
 
 /**
  * The entire interaction vocabulary, none of it explained on screen:
+ * - brush: moving the cursor across the surface drags it faintly
  * - tap: quick press -> small impulse at the cursor
- * - hold: press and keep holding -> charge builds silently; release delivers
- *   it where the cursor is. The heartbeat (audio phase) will ride this.
- * - brush: moving the cursor across the surface drags it faintly, so the
- *   very first idle mouse movement already answers "is this thing live?"
+ * - hold still: charge builds silently; release delivers it. The heartbeat
+ *   rides this.
+ * - press and DRAG: becomes a grab — a handful of flesh follows the hand,
+ *   released with whatever velocity it had. The most tactile thing here.
  */
 export interface SlapParams {
   tapPower: number;
@@ -21,6 +22,9 @@ export interface SlapParams {
   chargeRadiusBonus: number;
   brushPower: number;
   brushRadius: number;
+  grabRadius: number;
+  /** how far a grabbed handful can be pulled, world units */
+  maxPull: number;
 }
 
 export const defaultSlapParams: SlapParams = {
@@ -30,13 +34,18 @@ export const defaultSlapParams: SlapParams = {
   tapThresholdMs: 180,
   radius: 0.45,
   chargeRadiusBonus: 0.3,
-  brushPower: 0.12,
-  brushRadius: 0.3,
+  brushPower: 0.22,
+  brushRadius: 0.35,
+  grabRadius: 0.55,
+  maxPull: 0.5,
 };
+
+/** movement beyond this many px converts a hold into a grab */
+const GRAB_SLOP_PX = 8;
 
 export class SlapInteraction {
   readonly params: SlapParams;
-  /** 0..1 while holding, for the audio/visual layers to observe */
+  /** 0..1 while holding still, for the audio/visual layers to observe */
   charge = 0;
   /** fired on delivered impact with normalized power 0..1, point and direction */
   onImpact:
@@ -48,7 +57,13 @@ export class SlapInteraction {
   private readonly solver: XpbdSolver;
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
-  private holdStart: number | null = null;
+  private mode: "idle" | "pending" | "grab" = "idle";
+  private holdStart = 0;
+  private downX = 0;
+  private downY = 0;
+  private hitDist = 0;
+  private readonly grabOrigin = new THREE.Vector3();
+  private readonly grabOffset = new THREE.Vector3();
   private lastBrush: { point: THREE.Vector3; time: number } | null = null;
 
   constructor(
@@ -69,36 +84,49 @@ export class SlapInteraction {
   }
 
   update(): void {
-    if (this.holdStart !== null) {
-      this.charge = Math.min(
-        1,
-        (performance.now() - this.holdStart) / this.params.chargeTimeMs,
-      );
-    } else {
-      this.charge = 0;
-    }
+    this.charge =
+      this.mode === "pending"
+        ? Math.min(
+            1,
+            (performance.now() - this.holdStart) / this.params.chargeTimeMs,
+          )
+        : 0;
   }
 
-  private cast(clientX: number, clientY: number): THREE.Intersection | null {
+  private setRay(clientX: number, clientY: number): void {
     this.ndc.set(
       (clientX / window.innerWidth) * 2 - 1,
       -((clientY / window.innerHeight) * 2 - 1),
     );
     this.raycaster.setFromCamera(this.ndc, this.camera);
+  }
+
+  private cast(clientX: number, clientY: number): THREE.Intersection | null {
+    this.setRay(clientX, clientY);
     const hits = this.raycaster.intersectObject(this.proxy, false);
     return hits.length > 0 ? hits[0] : null;
   }
 
   private onDown(e: PointerEvent): void {
-    if (this.cast(e.clientX, e.clientY)) {
-      this.holdStart = performance.now();
-    }
+    const hit = this.cast(e.clientX, e.clientY);
+    if (!hit) return;
+    this.mode = "pending";
+    this.holdStart = performance.now();
+    this.downX = e.clientX;
+    this.downY = e.clientY;
+    this.hitDist = hit.distance;
+    this.grabOrigin.copy(hit.point);
   }
 
   private onUp(e: PointerEvent): void {
-    if (this.holdStart === null) return;
+    if (this.mode === "grab") {
+      this.solver.endGrab();
+      this.mode = "idle";
+      return;
+    }
+    if (this.mode !== "pending") return;
+    this.mode = "idle";
     const heldMs = performance.now() - this.holdStart;
-    this.holdStart = null;
 
     const hit = this.cast(e.clientX, e.clientY);
     if (!hit) return;
@@ -119,10 +147,33 @@ export class SlapInteraction {
   }
 
   private onMove(e: PointerEvent): void {
-    if (this.holdStart !== null) return; // no brushing mid-ritual
+    if (this.mode === "pending") {
+      const dx = e.clientX - this.downX;
+      const dy = e.clientY - this.downY;
+      if (dx * dx + dy * dy > GRAB_SLOP_PX * GRAB_SLOP_PX) {
+        this.mode = "grab";
+        this.solver.startGrab(this.grabOrigin, this.params.grabRadius);
+      }
+    }
+
+    if (this.mode === "grab") {
+      // the handful follows the cursor on the plane of the original hit
+      this.setRay(e.clientX, e.clientY);
+      this.grabOffset
+        .copy(this.raycaster.ray.origin)
+        .addScaledVector(this.raycaster.ray.direction, this.hitDist)
+        .sub(this.grabOrigin);
+      if (this.grabOffset.length() > this.params.maxPull) {
+        this.grabOffset.setLength(this.params.maxPull);
+      }
+      this.solver.setGrabOffset(this.grabOffset);
+      return;
+    }
+    if (this.mode !== "idle") return;
+
+    // brush
     const now = performance.now();
     if (this.lastBrush && now - this.lastBrush.time < 16) return;
-
     const hit = this.cast(e.clientX, e.clientY);
     if (!hit) {
       this.lastBrush = null;
@@ -134,7 +185,7 @@ export class SlapInteraction {
       const dist = delta.length();
       if (dist > 1e-3 && dtS > 0) {
         const speed = dist / dtS;
-        const strength = Math.min(this.params.brushPower * speed, 0.4);
+        const strength = Math.min(this.params.brushPower * speed, 0.45);
         this.solver.impulse(
           hit.point,
           delta,

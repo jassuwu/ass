@@ -68,5 +68,8 @@ export class CameraRig {
       t.z + Math.cos(this.yaw) * Math.cos(this.pitch) * d,
     );
     this.camera.lookAt(t);
+    // nothing renders through this camera directly anymore (the pipeline
+    // uses a mirror), so keep its world matrix fresh for raycasting
+    this.camera.updateMatrixWorld();
   }
 }

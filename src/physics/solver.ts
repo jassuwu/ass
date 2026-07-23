@@ -39,12 +39,63 @@ export class XpbdSolver {
   private readonly prev: Float32Array;
   private readonly vel: Float32Array;
 
+  // grab state: a handful of flesh follows the cursor with a soft pull
+  private grabIds: number[] = [];
+  private grabW: number[] = [];
+  private grabBase: Float32Array | null = null;
+  private readonly grabOffset = { x: 0, y: 0, z: 0 };
+  private grabbing = false;
+  /** 1/s — how eagerly grabbed flesh follows the hand */
+  grabRate = 45;
+
   constructor(lattice: Lattice, params: Partial<SolverParams> = {}) {
     this.lattice = lattice;
     this.params = { ...defaultSolverParams, ...params };
     this.pos = lattice.rest.slice();
     this.prev = lattice.rest.slice();
     this.vel = new Float32Array(lattice.count * 3);
+  }
+
+  startGrab(point: THREE.Vector3, radius: number): void {
+    this.grabIds.length = 0;
+    this.grabW.length = 0;
+    const sigma = radius * 0.6;
+    const inv2s2 = 1 / (2 * sigma * sigma);
+    const cutoff2 = (radius * 1.8) ** 2;
+    const { pos } = this;
+    for (let i = 0; i < this.lattice.count; i++) {
+      const i3 = i * 3;
+      const dx = pos[i3] - point.x;
+      const dy = pos[i3 + 1] - point.y;
+      const dz = pos[i3 + 2] - point.z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > cutoff2) continue;
+      this.grabIds.push(i);
+      this.grabW.push(Math.exp(-d2 * inv2s2));
+    }
+    this.grabBase = new Float32Array(this.grabIds.length * 3);
+    for (let k = 0; k < this.grabIds.length; k++) {
+      const i3 = this.grabIds[k] * 3;
+      this.grabBase[k * 3] = pos[i3];
+      this.grabBase[k * 3 + 1] = pos[i3 + 1];
+      this.grabBase[k * 3 + 2] = pos[i3 + 2];
+    }
+    this.grabOffset.x = 0;
+    this.grabOffset.y = 0;
+    this.grabOffset.z = 0;
+    this.grabbing = true;
+  }
+
+  setGrabOffset(offset: THREE.Vector3): void {
+    this.grabOffset.x = offset.x;
+    this.grabOffset.y = offset.y;
+    this.grabOffset.z = offset.z;
+  }
+
+  /** release — flesh keeps its velocity and flings back on its own */
+  endGrab(): void {
+    this.grabbing = false;
+    this.grabBase = null;
   }
 
   step(dt: number): void {
@@ -75,6 +126,23 @@ export class XpbdSolver {
         pos[i3] += (rest[i3] - pos[i3]) * pull;
         pos[i3 + 1] += (rest[i3 + 1] - pos[i3 + 1]) * pull;
         pos[i3 + 2] += (rest[i3 + 2] - pos[i3 + 2]) * pull;
+      }
+
+      // grabbed flesh chases the hand (anchors below still resist, so a
+      // handful near the bone simply refuses to travel far — correct)
+      if (this.grabbing && this.grabBase) {
+        const k = 1 - Math.exp(-this.grabRate * h);
+        const o = this.grabOffset;
+        for (let g = 0; g < this.grabIds.length; g++) {
+          const w = this.grabW[g];
+          const i3 = this.grabIds[g] * 3;
+          const tx = this.grabBase[g * 3] + o.x * w;
+          const ty = this.grabBase[g * 3 + 1] + o.y * w;
+          const tz = this.grabBase[g * 3 + 2] + o.z * w;
+          pos[i3] += (tx - pos[i3]) * k;
+          pos[i3 + 1] += (ty - pos[i3 + 1]) * k;
+          pos[i3 + 2] += (tz - pos[i3 + 2]) * k;
+        }
       }
 
       // distance constraints, one XPBD iteration
