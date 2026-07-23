@@ -44,6 +44,7 @@ const CONSTRAINT_OFFSETS: ReadonlyArray<readonly [number, number, number]> = [
 
 export function buildLattice(
   isInside: (p: THREE.Vector3) => boolean,
+  depth01: (p: THREE.Vector3) => number,
   bounds: THREE.Box3,
   spacing: number,
 ): Lattice {
@@ -160,13 +161,20 @@ export function buildLattice(
     if (z < zMin) zMin = z;
     if (z > zMax) zMax = z;
   }
+  // flesh layering: deep particles are musculature held by the skeleton,
+  // only the outer fat layer is free — this is what separates flesh from jelly
+  const CORE_HOLD = 0.5;
   const anchorW = new Float32Array(count);
+  const q = new THREE.Vector3();
   for (let a = 0; a < count; a++) {
     const zn = (rest[a * 3 + 2] - zMin) / (zMax - zMin);
     const y = rest[a * 3 + 1];
     const back = Math.max(0, 1 - zn * 1.7) ** 1.6;
     const top = 0.6 * THREE.MathUtils.smoothstep(y, 0.45, 1.0);
-    anchorW[a] = Math.min(1, back + top);
+    const core =
+      CORE_HOLD *
+      depth01(q.set(rest[a * 3], rest[a * 3 + 1], rest[a * 3 + 2])) ** 1.5;
+    anchorW[a] = Math.min(1, back + top + core);
   }
 
   // distance constraints

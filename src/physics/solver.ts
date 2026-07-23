@@ -21,12 +21,14 @@ export interface SolverParams {
   maxDisplacement: number;
 }
 
+// Tuned away from "jelly": flesh is taut (low compliance), heavily damped
+// (~1.5 visible oscillations, not six), and recovers its shape briskly.
 export const defaultSolverParams: SolverParams = {
   substeps: 8,
-  compliance: 4e-4,
-  anchorRate: 55,
-  shapeMemoryRate: 2.5,
-  damping: 1.2,
+  compliance: 1.5e-4,
+  anchorRate: 70,
+  shapeMemoryRate: 5,
+  damping: 3.8,
   maxDisplacement: 0.55,
 };
 

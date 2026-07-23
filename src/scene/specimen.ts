@@ -7,6 +7,11 @@ export interface Specimen {
   proxy: THREE.Mesh;
   /** analytic inside-test used to seed the physics lattice */
   isInside: (p: THREE.Vector3) => boolean;
+  /**
+   * normalized interior depth: 0 at/outside the surface, 1 deep in the core.
+   * Drives the flesh layering — firm musculature inside, soft fat outside.
+   */
+  depth01: (p: THREE.Vector3) => number;
 }
 
 /**
@@ -61,13 +66,21 @@ function buildGeometry(
 }
 
 function isInside(p: THREE.Vector3): boolean {
+  return depth01(p) > 0;
+}
+
+/** fraction of the (unit-space) radius considered fully "core" */
+const CORE_DEPTH = 0.55;
+
+function depth01(p: THREE.Vector3): number {
   const qx = p.x / SCALE.x;
   const qy = p.y / SCALE.y;
   const qz = p.z / SCALE.z;
   const len = Math.sqrt(qx * qx + qy * qy + qz * qz);
-  if (len < 1e-6) return true;
+  if (len < 1e-6) return 1;
   const n = new THREE.Vector3(qx / len, qy / len, qz / len);
-  return len <= shapeRadius(n);
+  const depth = shapeRadius(n) - len;
+  return THREE.MathUtils.clamp(depth / CORE_DEPTH, 0, 1);
 }
 
 export function createPlaceholderSpecimen(): Specimen {
@@ -85,5 +98,5 @@ export function createPlaceholderSpecimen(): Specimen {
   );
   proxy.updateMatrixWorld(true);
 
-  return { mesh, proxy, isInside };
+  return { mesh, proxy, isInside, depth01 };
 }

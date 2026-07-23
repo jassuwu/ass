@@ -25,7 +25,12 @@ export class App {
     specimen.mesh.geometry.computeBoundingBox();
     const bounds = specimen.mesh.geometry.boundingBox ?? new THREE.Box3();
     this.solver = new XpbdSolver(
-      buildLattice(specimen.isInside, bounds, LATTICE_SPACING),
+      buildLattice(
+        specimen.isInside,
+        specimen.depth01,
+        bounds,
+        LATTICE_SPACING,
+      ),
     );
     this.skin = new MeshSkin(this.solver.lattice, specimen.mesh);
     this.slap = new SlapInteraction(

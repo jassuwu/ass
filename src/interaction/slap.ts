@@ -24,8 +24,8 @@ export interface SlapParams {
 }
 
 export const defaultSlapParams: SlapParams = {
-  tapPower: 0.55,
-  chargeBonus: 2.6,
+  tapPower: 0.7,
+  chargeBonus: 3.2,
   chargeTimeMs: 1100,
   tapThresholdMs: 180,
   radius: 0.45,
