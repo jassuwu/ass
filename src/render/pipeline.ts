@@ -53,6 +53,8 @@ export class Pipeline {
       camera,
     );
     aoPass.radius.value = 0.4;
+    // half-res AO is indistinguishable on smooth flesh and halves its cost
+    aoPass.resolutionScale = 0.5;
     // skin cavities don't just darken — light surviving multiple subsurface
     // bounces comes back dimmer AND redder. Grading the AO term this way is
     // the film-lookdev trick that makes crevices read as flesh, not concrete.

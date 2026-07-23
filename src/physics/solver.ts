@@ -39,6 +39,11 @@ export class XpbdSolver {
   private readonly prev: Float32Array;
   private readonly vel: Float32Array;
 
+  /** set on any external disturbance; the app uses it to wake the sim */
+  stirred = false;
+  private maxSpeed2 = 0;
+  private maxDisp2 = 0;
+
   // grab state: a handful of flesh follows the cursor with a soft pull
   private grabIds: number[] = [];
   private grabW: number[] = [];
@@ -56,7 +61,22 @@ export class XpbdSolver {
     this.vel = new Float32Array(lattice.count * 3);
   }
 
+  /** true when motion has decayed below visible thresholds (<~1px) */
+  get settled(): boolean {
+    return this.maxSpeed2 < 1e-4 && this.maxDisp2 < 4e-6;
+  }
+
+  /** snap home — called once before sleeping so there is no drift */
+  reset(): void {
+    this.pos.set(this.lattice.rest);
+    this.prev.set(this.lattice.rest);
+    this.vel.fill(0);
+    this.maxSpeed2 = 0;
+    this.maxDisp2 = 0;
+  }
+
   startGrab(point: THREE.Vector3, radius: number): void {
+    this.stirred = true;
     this.grabIds.length = 0;
     this.grabW.length = 0;
     const sigma = radius * 0.6;
@@ -87,6 +107,7 @@ export class XpbdSolver {
   }
 
   setGrabOffset(offset: THREE.Vector3): void {
+    this.stirred = true;
     this.grabOffset.x = offset.x;
     this.grabOffset.y = offset.y;
     this.grabOffset.z = offset.z;
@@ -184,6 +205,25 @@ export class XpbdSolver {
         vel[i] = (pos[i] - prev[i]) * invH;
       }
     }
+
+    // settle detection for the sleep state
+    let ms2 = 0;
+    let md2 = 0;
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3;
+      const v2 =
+        vel[i3] * vel[i3] +
+        vel[i3 + 1] * vel[i3 + 1] +
+        vel[i3 + 2] * vel[i3 + 2];
+      if (v2 > ms2) ms2 = v2;
+      const dx = pos[i3] - rest[i3];
+      const dy = pos[i3 + 1] - rest[i3 + 1];
+      const dz = pos[i3 + 2] - rest[i3 + 2];
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > md2) md2 = d2;
+    }
+    this.maxSpeed2 = ms2;
+    this.maxDisp2 = md2;
   }
 
   /**
@@ -196,6 +236,7 @@ export class XpbdSolver {
     strength: number,
     radius: number,
   ): void {
+    this.stirred = true;
     const { pos, vel, lattice } = this;
     const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
     if (len < 1e-9) return;

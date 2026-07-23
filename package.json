@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "lil-gui": "^0.21.0",
+    "stats-gl": "^4.2.3",
     "three": "^0.185.1"
   }
 }

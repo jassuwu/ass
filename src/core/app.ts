@@ -32,6 +32,9 @@ export class App {
    * so the post pipeline's pass() can bind a single camera object */
   private renderCam = new THREE.PerspectiveCamera(20, 1, 0.05, 100);
   private pipeline: Pipeline | null = null;
+  /** physics sleep: at rest the sim and skinning cost exactly nothing */
+  private simSleeping = false;
+  private stats: { update: () => void } | null = null;
 
   constructor() {
     const { specimen } = this.stage;
@@ -107,6 +110,13 @@ export class App {
     window.addEventListener("resize", () => this.resize());
     this.renderer.setAnimationLoop(() => this.tick());
     void maybeAttachDevGui(this.solver, this.slap, this.ripples, this.pipeline);
+    if (new URLSearchParams(window.location.search).has("dev")) {
+      const { default: Stats } = await import("stats-gl");
+      const stats = new Stats({ trackGPU: true, horizontal: true });
+      await stats.init(this.renderer);
+      document.body.appendChild(stats.dom);
+      this.stats = stats;
+    }
   }
 
   private resize(): void {
@@ -126,10 +136,26 @@ export class App {
     this.slap.update();
     this.audio.update(this.slap.charge);
     this.killCam.update(dt, this.rig);
-    const simDt = dt * this.killCam.timeScale;
-    this.solver.step(simDt);
-    this.ripples.update(simDt);
-    this.skin.apply(this.solver, this.ripples);
+
+    if (this.solver.stirred) {
+      this.simSleeping = false;
+      this.solver.stirred = false;
+    }
+    const busy =
+      this.slap.engaged || this.ripples.active || this.killCam.active;
+    if (busy) this.simSleeping = false;
+    if (!this.simSleeping) {
+      const simDt = dt * this.killCam.timeScale;
+      this.solver.step(simDt);
+      this.ripples.update(simDt);
+      this.skin.apply(this.solver, this.ripples);
+      if (!busy && this.solver.settled) {
+        // snap home (<1px away by construction), skin once, go to sleep
+        this.solver.reset();
+        this.skin.apply(this.solver, this.ripples);
+        this.simSleeping = true;
+      }
+    }
     this.rig.update(dt, this.pointer);
 
     const source = this.killCam.active ? this.killCam.camera : this.rig.camera;
@@ -146,6 +172,7 @@ export class App {
     } else {
       this.renderer.render(this.stage.scene, this.renderCam);
     }
+    this.stats?.update();
   }
 
   private syncRenderCam(source: THREE.PerspectiveCamera): void {

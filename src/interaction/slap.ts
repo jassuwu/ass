@@ -83,6 +83,11 @@ export class SlapInteraction {
     window.addEventListener("pointermove", (e) => this.onMove(e));
   }
 
+  /** true while a press or grab is in flight — the sim must not sleep */
+  get engaged(): boolean {
+    return this.mode !== "idle";
+  }
+
   update(): void {
     this.charge =
       this.mode === "pending"
