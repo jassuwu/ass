@@ -3,6 +3,7 @@ import { AudioDirector } from "../audio/director";
 import { Pointer } from "../input/pointer";
 import { SlapInteraction } from "../interaction/slap";
 import { buildLattice } from "../physics/lattice";
+import { RippleField } from "../physics/ripples";
 import { MeshSkin } from "../physics/skin";
 import { XpbdSolver } from "../physics/solver";
 import { CameraRig } from "../scene/camera-rig";
@@ -23,6 +24,7 @@ export class App {
   private slap: SlapInteraction;
   private audio = new AudioDirector();
   private killCam = new KillCam();
+  private ripples = new RippleField();
 
   constructor() {
     const { specimen } = this.stage;
@@ -50,6 +52,7 @@ export class App {
       this.solver,
     );
     this.slap.onImpact = (power01, point, dir) => {
+      this.ripples.spawn(point, power01);
       // a full charge earns the kill cam — unannounced, undocumented
       if (power01 >= 0.95 && this.killCam.idle) {
         this.killCam.trigger(this.rig, point, dir);
@@ -69,7 +72,7 @@ export class App {
     this.resize();
     window.addEventListener("resize", () => this.resize());
     this.renderer.setAnimationLoop(() => this.tick());
-    void maybeAttachDevGui(this.solver, this.slap);
+    void maybeAttachDevGui(this.solver, this.slap, this.ripples);
   }
 
   private resize(): void {
@@ -89,8 +92,10 @@ export class App {
     this.slap.update();
     this.audio.update(this.slap.charge);
     this.killCam.update(dt, this.rig);
-    this.solver.step(dt * this.killCam.timeScale);
-    this.skin.apply(this.solver);
+    const simDt = dt * this.killCam.timeScale;
+    this.solver.step(simDt);
+    this.ripples.update(simDt);
+    this.skin.apply(this.solver, this.ripples);
     this.rig.update(dt, this.pointer);
     const camera = this.killCam.active ? this.killCam.camera : this.rig.camera;
     this.renderer.render(this.stage.scene, camera);

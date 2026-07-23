@@ -1,5 +1,6 @@
 import type * as THREE from "three/webgpu";
 import type { Lattice } from "./lattice";
+import type { RippleField } from "./ripples";
 import type { XpbdSolver } from "./solver";
 
 /**
@@ -12,6 +13,7 @@ export class MeshSkin {
   private readonly mesh: THREE.Mesh;
   private readonly vertCount: number;
   private readonly base: Float32Array;
+  private readonly baseNormal: Float32Array;
   private readonly ids: Int32Array;
   private readonly weights: Float32Array;
 
@@ -20,6 +22,7 @@ export class MeshSkin {
     const posAttr = mesh.geometry.attributes.position;
     this.vertCount = posAttr.count;
     this.base = new Float32Array(posAttr.array);
+    this.baseNormal = new Float32Array(mesh.geometry.attributes.normal.array);
     this.ids = new Int32Array(this.vertCount * 8).fill(-1);
     this.weights = new Float32Array(this.vertCount * 8);
 
@@ -84,11 +87,12 @@ export class MeshSkin {
       mesh.geometry.boundingSphere.radius *= 1.4;
   }
 
-  apply(solver: XpbdSolver): void {
+  apply(solver: XpbdSolver, ripples?: RippleField): void {
     const { pos } = solver;
     const { rest } = solver.lattice;
     const attr = this.mesh.geometry.attributes.position;
     const out = attr.array as Float32Array;
+    const rippling = ripples?.active === true;
 
     for (let v = 0; v < this.vertCount; v++) {
       let dx = 0;
@@ -103,9 +107,21 @@ export class MeshSkin {
         dy += (pos[i3 + 1] - rest[i3 + 1]) * w;
         dz += (pos[i3 + 2] - rest[i3 + 2]) * w;
       }
-      out[v * 3] = this.base[v * 3] + dx;
-      out[v * 3 + 1] = this.base[v * 3 + 1] + dy;
-      out[v * 3 + 2] = this.base[v * 3 + 2] + dz;
+      const bx = this.base[v * 3];
+      const by = this.base[v * 3 + 1];
+      const bz = this.base[v * 3 + 2];
+      if (rippling && ripples) {
+        // fine traveling wave rides on top, along the rest normal
+        const off = ripples.offsetAt(bx, by, bz);
+        if (off !== 0) {
+          dx += this.baseNormal[v * 3] * off;
+          dy += this.baseNormal[v * 3 + 1] * off;
+          dz += this.baseNormal[v * 3 + 2] * off;
+        }
+      }
+      out[v * 3] = bx + dx;
+      out[v * 3 + 1] = by + dy;
+      out[v * 3 + 2] = bz + dz;
     }
 
     attr.needsUpdate = true;

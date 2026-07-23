@@ -1,4 +1,5 @@
 import type { SlapInteraction } from "../interaction/slap";
+import type { RippleField } from "../physics/ripples";
 import type { XpbdSolver } from "../physics/solver";
 
 /**
@@ -8,6 +9,7 @@ import type { XpbdSolver } from "../physics/solver";
 export async function maybeAttachDevGui(
   solver: XpbdSolver,
   slap: SlapInteraction,
+  ripples: RippleField,
 ): Promise<void> {
   if (!new URLSearchParams(window.location.search).has("dev")) return;
   const { default: GUI } = await import("lil-gui");
@@ -29,4 +31,12 @@ export async function maybeAttachDevGui(
   i.add(slap.params, "chargeRadiusBonus", 0, 1);
   i.add(slap.params, "brushPower", 0, 0.5);
   i.add(slap.params, "brushRadius", 0.05, 0.8);
+
+  const r = gui.addFolder("ripples");
+  r.add(ripples.params, "speed", 0.5, 6);
+  r.add(ripples.params, "wavelength", 0.1, 1);
+  r.add(ripples.params, "width", 0.05, 0.5);
+  r.add(ripples.params, "spatialDecay", 0, 3);
+  r.add(ripples.params, "temporalDecay", 0, 6);
+  r.add(ripples.params, "maxAmp", 0, 0.12);
 }
