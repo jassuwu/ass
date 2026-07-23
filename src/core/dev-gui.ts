@@ -31,10 +31,11 @@ export async function maybeAttachDevGui(
   i.add(slap.params, "chargeRadiusBonus", 0, 1);
   i.add(slap.params, "brushPower", 0, 0.5);
   i.add(slap.params, "brushRadius", 0.05, 0.8);
+  i.add(slap.params, "grabRadius", 0.2, 1.2);
+  i.add(slap.params, "maxPull", 0.1, 1);
 
   const r = gui.addFolder("ripples");
   r.add(ripples.params, "speed", 0.5, 6);
-  r.add(ripples.params, "wavelength", 0.1, 1);
   r.add(ripples.params, "width", 0.05, 0.5);
   r.add(ripples.params, "spatialDecay", 0, 3);
   r.add(ripples.params, "temporalDecay", 0, 6);

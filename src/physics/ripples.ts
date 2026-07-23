@@ -1,14 +1,20 @@
 /**
- * Fine traveling surface waves, layered over the coarse lattice dynamics.
- * The XPBD lattice carries mass and jiggle; this carries the ring that
- * crawls outward from an impact — the detail the kill cam dives in to see.
+ * Fine traveling surface deformation, layered over the coarse lattice
+ * dynamics — and deliberately NOT a water ripple. Tissue is dispersive and
+ * heavily damped: what travels is a single pushed bulge of displaced fat
+ * (derivative-of-gaussian profile: pile-up behind the front, slight
+ * compression dent ahead), dying fast with distance. The cheeks are
+ * mechanically decoupled at the crease, and the gluteal fold blocks most
+ * of what tries to travel into the thigh. Amplitude is further scaled
+ * per-vertex by local fat capacity (see MeshSkin) — flesh over bone
+ * barely carries it.
+ *
  * Advanced on simulation time, so slow motion slows the wavefront too.
  */
 export interface RippleParams {
-  /** wavefront speed, world units/s */
+  /** wavefront speed, world units/s — tissue is slow */
   speed: number;
-  wavelength: number;
-  /** gaussian half-width of the wave packet */
+  /** gaussian half-width of the traveling bulge */
   width: number;
   /** amplitude loss per world unit travelled */
   spatialDecay: number;
@@ -19,23 +25,33 @@ export interface RippleParams {
 }
 
 export const defaultRippleParams: RippleParams = {
-  speed: 2.1,
-  wavelength: 0.34,
-  width: 0.16,
-  spatialDecay: 0.9,
-  temporalDecay: 2.1,
-  maxAmp: 0.045,
+  speed: 1.7,
+  width: 0.22,
+  spatialDecay: 1.5,
+  temporalDecay: 2.6,
+  maxAmp: 0.055,
 };
+
+/** y of the gluteal fold — must match specimen.ts bodyRadius() */
+const FOLD_Y = -0.8;
+/** attenuation for energy crossing the crease / the fold */
+const CREASE_ATTEN = 0.12;
+const FOLD_ATTEN = 0.3;
 
 interface Ripple {
   x: number;
   y: number;
   z: number;
+  /** which cheek it started on */
+  side: number;
+  aboveFold: boolean;
   age: number;
   amp: number;
 }
 
 const MAX_RIPPLES = 5;
+/** normalizes the peak of u*exp(-u^2) to ~1 */
+const BULGE_NORM = 2.33;
 
 export class RippleField {
   readonly params: RippleParams;
@@ -47,7 +63,15 @@ export class RippleField {
 
   spawn(point: { x: number; y: number; z: number }, power01: number): void {
     const amp = this.params.maxAmp * (0.25 + 0.75 * Math.min(power01, 1));
-    this.list.push({ x: point.x, y: point.y, z: point.z, age: 0, amp });
+    this.list.push({
+      x: point.x,
+      y: point.y,
+      z: point.z,
+      side: Math.sign(point.x) || 1,
+      aboveFold: point.y > FOLD_Y,
+      age: 0,
+      amp,
+    });
     if (this.list.length > MAX_RIPPLES) this.list.shift();
   }
 
@@ -65,8 +89,7 @@ export class RippleField {
 
   /** signed surface offset at a rest-space point */
   offsetAt(px: number, py: number, pz: number): number {
-    const { speed, wavelength, width, spatialDecay, temporalDecay } =
-      this.params;
+    const { speed, width, spatialDecay, temporalDecay } = this.params;
     let sum = 0;
     for (const r of this.list) {
       const front = speed * r.age;
@@ -79,11 +102,20 @@ export class RippleField {
       if (d2 < dMin * dMin || d2 > dMax * dMax) continue;
       const d = Math.sqrt(d2);
       const u = (d - front) / width;
-      sum +=
+      // pile-up behind the front, compression dent ahead — not rings
+      let contribution =
         r.amp *
+        -u *
         Math.exp(-u * u) *
-        Math.cos(((d - front) * 2 * Math.PI) / wavelength) *
+        BULGE_NORM *
         Math.exp(-d * spatialDecay - r.age * temporalDecay);
+      // the crease decouples the cheeks
+      if (Math.sign(px) !== r.side && Math.abs(px) > 0.06) {
+        contribution *= CREASE_ATTEN;
+      }
+      // the fold blocks most of what heads into the thigh
+      if (py > FOLD_Y !== r.aboveFold) contribution *= FOLD_ATTEN;
+      sum += contribution;
     }
     return sum;
   }

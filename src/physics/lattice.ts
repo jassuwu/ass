@@ -173,10 +173,16 @@ export function buildLattice(
     const top = 0.6 * THREE.MathUtils.smoothstep(y, 0.45, 1.0);
     // thighs are musculature: they carry a ripple but barely jiggle
     const bottom = 0.55 * THREE.MathUtils.smoothstep(-y, 0.85, 1.6);
+    // the sacrum: bone right under the skin between the cheeks' upper
+    // halves — that region does not wobble
+    const sacrum =
+      0.55 *
+      Math.exp(-((rest[a * 3] / 0.4) ** 2)) *
+      Math.exp(-(((y - 0.55) / 0.4) ** 2));
     const core =
       CORE_HOLD *
       depth01(q.set(rest[a * 3], rest[a * 3 + 1], rest[a * 3 + 2])) ** 1.5;
-    anchorW[a] = Math.min(1, back + top + bottom + core);
+    anchorW[a] = Math.min(1, back + top + bottom + sacrum + core);
   }
 
   // distance constraints

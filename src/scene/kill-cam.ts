@@ -13,7 +13,7 @@ const HOLD_S = 1.9;
 const RETURN_S = 0.6;
 const SLOW_TIME_SCALE = 0.06;
 const COOLDOWN_S = 4;
-const CLOSE_FOV = 30;
+const CLOSE_FOV = 32;
 
 const ease = (s: number) => s * s * (3 - 2 * s);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -73,12 +73,14 @@ export class KillCam {
     const side = new THREE.Vector3().crossVectors(UP, n).normalize();
     if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
     side.multiplyScalar(Math.sign(point.x) || 1);
+    // far enough back that the traveling bulge stays in frame — the shot
+    // is about watching the wave cross the flesh, not counting pores
     this.offset
       .copy(n)
-      .multiplyScalar(0.8)
+      .multiplyScalar(1.0)
       .addScaledVector(side, 0.7)
-      .addScaledVector(UP, 0.3)
-      .setLength(1.15);
+      .addScaledVector(UP, 0.35)
+      .setLength(1.85);
     this.setBars(true);
   }
 
@@ -105,9 +107,9 @@ export class KillCam {
       }
     } else if (this.phase === "hold") {
       this.timeScale = SLOW_TIME_SCALE;
-      // slow drift around the impact, gentle push-in
-      this.offset.applyAxisAngle(UP, dt * 0.14);
-      this.offset.multiplyScalar(1 - dt * 0.03);
+      // slow drift around the impact, very gentle push-in
+      this.offset.applyAxisAngle(UP, dt * 0.1);
+      this.offset.multiplyScalar(1 - dt * 0.015);
       this.camera.position.copy(this.point).add(this.offset);
       this.look.copy(this.point);
       if (this.t >= HOLD_S) {

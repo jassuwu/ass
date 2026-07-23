@@ -16,6 +16,8 @@ export class MeshSkin {
   private readonly baseNormal: Float32Array;
   private readonly ids: Int32Array;
   private readonly weights: Float32Array;
+  /** per-vertex jiggle capacity: 1 over deep free fat, ~0 over bone */
+  private readonly capacity: Float32Array;
 
   constructor(lattice: Lattice, mesh: THREE.Mesh) {
     this.mesh = mesh;
@@ -80,6 +82,20 @@ export class MeshSkin {
       }
     }
 
+    // fat map: how much free tissue sits under each vertex — the inverse of
+    // the anchor field, sampled through the same trilinear weights. Ripples
+    // over the sacrum/fold die; over the cheek belly they carry.
+    this.capacity = new Float32Array(this.vertCount);
+    for (let v = 0; v < this.vertCount; v++) {
+      let anchored = 0;
+      for (let c = 0; c < 8; c++) {
+        const id = this.ids[v * 8 + c];
+        if (id === -1) continue;
+        anchored += lattice.anchorW[id] * this.weights[v * 8 + c];
+      }
+      this.capacity[v] = Math.min(Math.max(1 - anchored, 0), 1);
+    }
+
     // deformations are bounded; grow the bounding sphere once instead of
     // recomputing it per frame
     mesh.geometry.computeBoundingSphere();
@@ -111,8 +127,9 @@ export class MeshSkin {
       const by = this.base[v * 3 + 1];
       const bz = this.base[v * 3 + 2];
       if (rippling && ripples) {
-        // fine traveling wave rides on top, along the rest normal
-        const off = ripples.offsetAt(bx, by, bz);
+        // fine traveling wave rides on top, along the rest normal,
+        // scaled by how much free fat actually sits under this vertex
+        const off = ripples.offsetAt(bx, by, bz) * this.capacity[v];
         if (off !== 0) {
           dx += this.baseNormal[v * 3] * off;
           dy += this.baseNormal[v * 3 + 1] * off;
