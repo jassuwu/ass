@@ -57,7 +57,9 @@ export class App {
   }
 
   private tick(): void {
-    const dt = Math.min(this.clock.getDelta(), 1 / 30);
+    // lower bound matters: a first-frame dt of exactly 0 would make the
+    // substep h=0 and the velocity update (pos-prev)/h NaN the whole lattice
+    const dt = THREE.MathUtils.clamp(this.clock.getDelta(), 1 / 240, 1 / 30);
     this.slap.update();
     this.solver.step(dt);
     this.skin.apply(this.solver);
