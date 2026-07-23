@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>A.S.S. — Advanced Softbody Simulator</title>
+<meta name="description" content="Serious physics. Unserious subject." />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #060606; overflow: hidden; }
+  body {
+    font-family: "Didot", "Bodoni MT", "Playfair Display", Georgia, serif;
+    color: #e9e4da;
+    -webkit-font-smoothing: antialiased;
+  }
+  #scene { position: fixed; inset: 0; display: block; cursor: grab; }
+  #scene:active { cursor: grabbing; }
+
+  .ui { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; }
+
+  header { text-align: center; padding-top: clamp(1rem, 3.5vh, 2.5rem); }
+  h1 {
+    font-size: clamp(3.8rem, 14vw, 11rem);
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    line-height: 0.9;
+    color: #f2ede2;
+    text-shadow: 0 0 80px rgba(255, 240, 210, 0.15);
+    user-select: none;
+  }
+  h1 .dot { color: #b08d4f; }
+  .tagline {
+    margin-top: 0.8rem;
+    font-size: clamp(0.75rem, 1.6vw, 1rem);
+    letter-spacing: 0.42em;
+    text-transform: uppercase;
+    color: #9a917f;
+  }
+  .tagline b { color: #b08d4f; font-weight: 400; }
+
+  footer { margin-top: auto; text-align: center; padding-bottom: clamp(1rem, 3vh, 2rem); }
+  .hint {
+    font-size: 0.78rem; letter-spacing: 0.3em; text-transform: uppercase;
+    color: #6e6759; margin-bottom: 0.8rem;
+  }
+  .legal { font-size: 0.68rem; letter-spacing: 0.12em; color: #4d483e; }
+  .legal a { color: #6e6759; text-decoration: none; border-bottom: 1px dotted #4d483e; pointer-events: auto; }
+  .legal a:hover { color: #b08d4f; }
+
+  /* ---- telemetry HUD ---- */
+  .panel {
+    position: fixed;
+    font-family: "SF Mono", "JetBrains Mono", Menlo, monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    color: #a89e8a;
+    background: rgba(8, 8, 8, 0.55);
+    border: 1px solid #2a2username620;
+    border: 1px solid #2a2620;
+    padding: 0.9rem 1.1rem;
+    backdrop-filter: blur(6px);
+    pointer-events: auto;
+  }
+  .panel h2 {
+    font-family: inherit;
+    font-size: 0.62rem;
+    font-weight: 400;
+    letter-spacing: 0.35em;
+    color: #b08d4f;
+    margin-bottom: 0.7rem;
+  }
+  #telemetry { top: 50%; right: 1.2rem; transform: translateY(-50%); min-width: 15.5rem; }
+  #telemetry .row { display: flex; justify-content: space-between; gap: 1.5rem; line-height: 1.75; }
+  #telemetry .row span:last-child { color: #ded7c6; }
+  #telemetry .divider { border-top: 1px solid #2a2620; margin: 0.55rem 0; }
+  #slapcount { color: #b08d4f !important; }
+
+  #bench { top: 50%; left: 1.2rem; transform: translateY(-50%); min-width: 14rem; }
+  #bench label {
+    display: block; margin-top: 0.65rem; margin-bottom: 0.2rem;
+    color: #7a7263; text-transform: uppercase; letter-spacing: 0.2em; font-size: 0.6rem;
+  }
+  #bench .val { float: right; color: #ded7c6; }
+  #bench input[type="range"] {
+    width: 100%; appearance: none; -webkit-appearance: none;
+    height: 2px; background: #3a352c; outline: none;
+  }
+  #bench input[type="range"]::-webkit-slider-thumb {
+    appearance: none; -webkit-appearance: none;
+    width: 11px; height: 11px; background: #b08d4f; border-radius: 50%; cursor: pointer;
+  }
+
+  @media (max-width: 900px) {
+    #bench { display: none; }
+    #telemetry { top: auto; bottom: 7.5rem; right: 0.8rem; transform: none; min-width: 12rem; }
+  }
+
+  /* rotating deadpan log line */
+  .fact {
+    position: fixed; left: 50%; bottom: 16%;
+    transform: translateX(-50%);
+    font-style: italic;
+    font-size: clamp(0.85rem, 1.5vw, 1.05rem);
+    color: #b8ae9a; letter-spacing: 0.05em;
+    opacity: 0; transition: opacity 1.2s ease;
+    text-align: center; max-width: 36em; padding: 0 1rem;
+    pointer-events: none;
+  }
+  .fact.show { opacity: 1; }
+
+  /* veil */
+  #veil {
+    position: fixed; inset: 0; background: #060606;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 1.6rem; z-index: 10;
+    transition: opacity 1.6s ease;
+  }
+  #veil.gone { opacity: 0; pointer-events: none; }
+  #veil p {
+    font-style: italic; letter-spacing: 0.25em; text-transform: uppercase;
+    font-size: clamp(0.75rem, 1.8vw, 0.95rem); color: #9a917f;
+    text-align: center; line-height: 2; padding: 0 1rem;
+  }
+  #enter {
+    pointer-events: auto; font-family: inherit;
+    font-size: clamp(1rem, 2.5vw, 1.3rem);
+    letter-spacing: 0.4em; text-transform: uppercase;
+    background: none; color: #e9e4da; border: 1px solid #6e6759;
+    padding: 1rem 3rem 1rem 3.4rem; cursor: pointer;
+    transition: background 0.4s, color 0.4s;
+  }
+  #enter:hover { background: #e9e4da; color: #060606; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div class="ui">
+  <header>
+    <h1>ASS<span class="dot">.</span></h1>
+    <div class="tagline"><b>A</b>dvanced &nbsp;<b>S</b>oftbody &nbsp;<b>S</b>imulator&trade;</div>
+  </header>
+  <footer>
+    <div class="hint">drag to orbit &mdash; click the subject to deliver a calibrated slap</div>
+    <div class="legal">&copy; A.S.S. Laboratories. Peer-reviewed by absolutely no one. No asses were harmed &mdash; it is entirely procedural. <a href="donkey.html">the classical interpretation &rarr;</a></div>
+  </footer>
+</div>
+
+<div class="panel" id="telemetry">
+  <h2>LIVE TELEMETRY</h2>
+  <div class="row"><span>displacement L</span><span id="dispL">0.0 cm</span></div>
+  <div class="row"><span>displacement R</span><span id="dispR">0.0 cm</span></div>
+  <div class="row"><span>jiggle energy</span><span id="energy">0.000 J</span></div>
+  <div class="row"><span>natural freq</span><span id="freq">— Hz</span></div>
+  <div class="row"><span>damping ratio &zeta;</span><span id="zeta">—</span></div>
+  <div class="divider"></div>
+  <div class="row"><span>last impulse</span><span id="impulse">0 N&middot;s</span></div>
+  <div class="row"><span>slaps delivered</span><span id="slapcount">0</span></div>
+  <div class="row"><span>volume conserved</span><span>yes</span></div>
+  <div class="row"><span>dignity conserved</span><span>no</span></div>
+</div>
+
+<div class="panel" id="bench">
+  <h2>TUNING BENCH</h2>
+  <label>stiffness k <span class="val" id="kVal">90</span></label>
+  <input type="range" id="kSlider" min="25" max="260" value="90" />
+  <label>damping &zeta; <span class="val" id="zVal">0.10</span></label>
+  <input type="range" id="zSlider" min="3" max="60" value="10" />
+  <label>slap power <span class="val" id="pVal">1.0</span></label>
+  <input type="range" id="pSlider" min="3" max="30" value="10" />
+</div>
+
+<div class="fact" id="fact"></div>
+
+<div id="veil">
+  <p>a.s.s. laboratories presents<br/>six thousand hours of buttock physics research</p>
+  <button id="enter">behold</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { MarchingCubes } from 'three/addons/objects/MarchingCubes.js';
+
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x060606);
+scene.fog = new THREE.Fog(0x060606, 10, 24);
+
+const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
+camera.position.set(0, 2.6, 7.6);
+
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 2.0, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.7;
+controls.minDistance = 3.5;
+controls.maxDistance = 13;
+controls.maxPolarAngle = Math.PI * 0.55;
+controls.enablePan = false;
+
+// ---------- gallery lighting ----------
+scene.add(new THREE.HemisphereLight(0x353128, 0x0a0a0a, 0.5));
+
+const key = new THREE.SpotLight(0xfff0d8, 300, 40, Math.PI / 5.5, 0.45, 1.8);
+key.position.set(4, 9, 4);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.bias = -0.0004;
+scene.add(key);
+
+const rim = new THREE.SpotLight(0x8fa3c8, 110, 40, Math.PI / 5, 0.6, 1.8);
+rim.position.set(-5, 4, -5);
+scene.add(rim);
+
+// ---------- stage ----------
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(30, 64),
+  new THREE.MeshStandardMaterial({ color: 0x0d0c0b, roughness: 0.95 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const pedestal = new THREE.Mesh(
+  new THREE.CylinderGeometry(1.9, 2.2, 0.9, 64),
+  new THREE.MeshStandardMaterial({ color: 0x171512, roughness: 0.4, metalness: 0.3 })
+);
+pedestal.position.y = 0.45;
+pedestal.receiveShadow = true;
+pedestal.castShadow = true;
+scene.add(pedestal);
+
+// ---------- the subject: metaball sculpture ----------
+// Each cheek is a metaball driven by a damped spring — squash and merge come free.
+const marble = new THREE.MeshPhysicalMaterial({
+  color: 0xe6dfd2,
+  roughness: 0.34,
+  metalness: 0.0,
+  clearcoat: 0.25,
+  clearcoatRoughness: 0.5,
+  sheen: 0.3,
+  sheenColor: new THREE.Color(0xfff5e0),
+});
+
+const RES = 56;
+const blob = new MarchingCubes(RES, marble, false, false, 60000);
+blob.position.set(0, 2.05, 0);
+blob.scale.setScalar(1.55);
+blob.castShadow = true;
+blob.receiveShadow = true;
+scene.add(blob);
+
+// rest positions in field space (0..1, center 0.5). +z faces the camera at load.
+const CHEEK_L = new THREE.Vector3(-0.115, 0.0, 0.02);
+const CHEEK_R = new THREE.Vector3( 0.115, 0.0, 0.02);
+const HIP_L   = new THREE.Vector3(-0.075, 0.16, -0.05);
+const HIP_R   = new THREE.Vector3( 0.075, 0.16, -0.05);
+const THIGH_L = new THREE.Vector3(-0.085, -0.16, -0.01);
+const THIGH_R = new THREE.Vector3( 0.085, -0.16, -0.01);
+
+// ---------- physics: two independent damped harmonic oscillators ----------
+const params = { k: 90, zeta: 0.10, power: 1.0 };
+const cheeks = [
+  { rest: CHEEK_L, o: new THREE.Vector3(), v: new THREE.Vector3() },
+  { rest: CHEEK_R, o: new THREE.Vector3(), v: new THREE.Vector3() },
+];
+const tmp = new THREE.Vector3();
+
+function stepPhysics(dt) {
+  const { k, zeta } = params;
+  const c = 2 * zeta * Math.sqrt(k);
+  for (let i = 0; i < 2; i++) {
+    const ch = cheeks[i], other = cheeks[1 - i];
+    // spring back to rest + light cheek-to-cheek coupling (they are neighbors, after all)
+    tmp.copy(ch.o).multiplyScalar(-k)
+      .addScaledVector(ch.v, -c)
+      .addScaledVector(tmp.copy(other.o).sub(ch.o), 0.18 * k * 0.1);
+    ch.v.addScaledVector(tmp, dt);
+    ch.o.addScaledVector(ch.v, dt);
+    // hard clamp so a heroic slap can't tear the sculpture apart
+    if (ch.o.length() > 0.09) ch.o.setLength(0.09);
+  }
+}
+
+function updateField() {
+  blob.reset();
+  const SUB = 12, STR = 0.85;
+  for (let i = 0; i < 2; i++) {
+    const ch = cheeks[i];
+    const p = tmp.copy(ch.rest).add(ch.o);
+    // squash: displacement steals a little radius — volume is conserved (allegedly)
+    const squish = 1 - ch.o.length() * 1.8;
+    blob.addBall(0.5 + p.x, 0.5 + p.y, 0.5 + p.z, STR * squish, SUB);
+    // thigh follows its cheek at 35%, hip stays put
+    const th = i === 0 ? THIGH_L : THIGH_R;
+    blob.addBall(0.5 + th.x + ch.o.x * 0.35, 0.5 + th.y + ch.o.y * 0.35, 0.5 + th.z + ch.o.z * 0.35, 0.34, SUB);
+  }
+  blob.addBall(0.5 + HIP_L.x, 0.5 + HIP_L.y, 0.5 + HIP_L.z, 0.3, SUB);
+  blob.addBall(0.5 + HIP_R.x, 0.5 + HIP_R.y, 0.5 + HIP_R.z, 0.3, SUB);
+  blob.update();
+}
+
+// ---------- the slap ----------
+let audioCtx = null;
+function slapSound(force) {
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  const t0 = audioCtx.currentTime;
+  const dest = audioCtx.destination;
+  // crack: short band-passed noise burst
+  const len = Math.floor(audioCtx.sampleRate * 0.07);
+  const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 2;
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buf;
+  const bp = audioCtx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 1100 + force * 300;
+  bp.Q.value = 0.8;
+  const ng = audioCtx.createGain();
+  ng.gain.value = Math.min(0.5, 0.18 + force * 0.12);
+  noise.connect(bp).connect(ng).connect(dest);
+  noise.start(t0);
+  // thump: low sine drop
+  const osc = audioCtx.createOscillator();
+  const og = audioCtx.createGain();
+  osc.frequency.setValueAtTime(110, t0);
+  osc.frequency.exponentialRampToValueAtTime(55, t0 + 0.16);
+  og.gain.setValueAtTime(0.35, t0);
+  og.gain.exponentialRampToValueAtTime(0.001, t0 + 0.2);
+  osc.connect(og).connect(dest);
+  osc.start(t0);
+  osc.stop(t0 + 0.22);
+}
+
+let slaps = 0, lastImpulse = 0;
+const slapEl = document.getElementById('slapcount');
+const impulseEl = document.getElementById('impulse');
+
+function slap(cheekIdx, dirWorld, power) {
+  // impulse in field space: world dir is fine directionally (blob has uniform scale, no rotation)
+  cheeks[cheekIdx].v.addScaledVector(tmp.copy(dirWorld).normalize(), 0.028 * power);
+  slaps++;
+  lastImpulse = power;
+  slapEl.textContent = String(slaps);
+  impulseEl.textContent = `${(power * 4.2).toFixed(1)} N·s`;
+  slapSound(power);
+}
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let downAt = 0;
+canvas.addEventListener('pointerdown', () => { downAt = performance.now(); });
+canvas.addEventListener('pointerup', (e) => {
+  if (performance.now() - downAt > 250) return; // that was a drag, not a slap
+  pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObject(blob, false)[0];
+  if (!hit) return;
+  // which cheek? compare hit x in blob-local space
+  const local = blob.worldToLocal(hit.point.clone());
+  slap(local.x < 0 ? 0 : 1, raycaster.ray.direction, params.power);
+});
+
+// ---------- tuning bench ----------
+function bind(id, valId, fn) {
+  const el = document.getElementById(id), val = document.getElementById(valId);
+  el.addEventListener('input', () => { val.textContent = fn(Number(el.value)); });
+}
+bind('kSlider', 'kVal', (v) => { params.k = v; return String(v); });
+bind('zSlider', 'zVal', (v) => { params.zeta = v / 100; return (v / 100).toFixed(2); });
+bind('pSlider', 'pVal', (v) => { params.power = v / 10; return (v / 10).toFixed(1); });
+
+// ---------- telemetry ----------
+const dispLEl = document.getElementById('dispL');
+const dispREl = document.getElementById('dispR');
+const energyEl = document.getElementById('energy');
+const freqEl = document.getElementById('freq');
+const zetaEl = document.getElementById('zeta');
+function updateTelemetry() {
+  dispLEl.textContent = `${(cheeks[0].o.length() * 155).toFixed(1)} cm`;
+  dispREl.textContent = `${(cheeks[1].o.length() * 155).toFixed(1)} cm`;
+  const e = 0.5 * (cheeks[0].v.lengthSq() + cheeks[1].v.lengthSq()) * 1000;
+  energyEl.textContent = `${e.toFixed(3)} J`;
+  freqEl.textContent = `${(Math.sqrt(params.k) / (2 * Math.PI)).toFixed(2)} Hz`;
+  zetaEl.textContent = params.zeta.toFixed(2);
+}
+
+// ---------- deadpan research log ----------
+const facts = [
+  'Fig. 1 — the subject at rest.',
+  'Each cheek is an independent damped harmonic oscillator. As in nature.',
+  'Volume is conserved. Dignity is not.',
+  'Lower the damping ratio for scientifically significant jiggle.',
+  '“This is a whole ass physics engine.” — you, just now',
+  'Our engineers spent six thousand hours on this. They are not okay.',
+  'The simulation runs at 60 fps because your GPU respects the subject.',
+  'Peer review consisted of showing it to a friend, who said “nice.”',
+];
+const factEl = document.getElementById('fact');
+let factIdx = 0;
+function cycleFacts() {
+  factEl.textContent = facts[factIdx % facts.length];
+  factIdx++;
+  factEl.classList.add('show');
+  setTimeout(() => factEl.classList.remove('show'), 5200);
+}
+setInterval(cycleFacts, 6800);
+
+// ---------- veil ----------
+document.getElementById('enter').addEventListener('click', () => {
+  document.getElementById('veil').classList.add('gone');
+  // opening demonstration: one calibrated slap so the science is immediately visible
+  setTimeout(() => slap(1, tmp.set(0, 0.15, -1), 1.4), 1600);
+  setTimeout(cycleFacts, 3200);
+});
+
+// ---------- loop ----------
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.033);
+  stepPhysics(dt);
+  updateField();
+  updateTelemetry();
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
