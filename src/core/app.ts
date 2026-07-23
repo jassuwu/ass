@@ -7,6 +7,7 @@ import { buildLattice } from "../physics/lattice";
 import { RippleField } from "../physics/ripples";
 import { MeshSkin } from "../physics/skin";
 import { XpbdSolver } from "../physics/solver";
+import { Pipeline } from "../render/pipeline";
 import { CameraRig } from "../scene/camera-rig";
 import { KillCam } from "../scene/kill-cam";
 import { createStage, type Stage } from "../scene/stage";
@@ -26,6 +27,10 @@ export class App {
   private audio = new AudioDirector();
   private killCam = new KillCam();
   private ripples = new RippleField();
+  /** the camera actually rendered — mirrors rig or kill cam each frame,
+   * so the post pipeline's pass() can bind a single camera object */
+  private renderCam = new THREE.PerspectiveCamera(20, 1, 0.05, 100);
+  private pipeline: Pipeline | null = null;
 
   constructor() {
     const { specimen } = this.stage;
@@ -78,6 +83,12 @@ export class App {
     this.stage.scene.environment = env.texture;
     this.stage.scene.environmentIntensity = 0.3;
 
+    this.pipeline = new Pipeline(
+      this.renderer,
+      this.stage.scene,
+      this.renderCam,
+    );
+
     root.appendChild(this.renderer.domElement);
     this.resize();
     window.addEventListener("resize", () => this.resize());
@@ -107,7 +118,34 @@ export class App {
     this.ripples.update(simDt);
     this.skin.apply(this.solver, this.ripples);
     this.rig.update(dt, this.pointer);
-    const camera = this.killCam.active ? this.killCam.camera : this.rig.camera;
-    this.renderer.render(this.stage.scene, camera);
+
+    const source = this.killCam.active ? this.killCam.camera : this.rig.camera;
+    this.syncRenderCam(source);
+    if (this.pipeline) {
+      const focusTarget = this.killCam.active
+        ? this.killCam.focusPoint
+        : this.rig.target;
+      this.pipeline.focusDistance.value =
+        this.renderCam.position.distanceTo(focusTarget);
+      // shallower depth of field in the close-up, restrained in the frame
+      this.pipeline.bokehScale.value = this.killCam.active ? 2.2 : 0.8;
+      this.pipeline.render();
+    } else {
+      this.renderer.render(this.stage.scene, this.renderCam);
+    }
+  }
+
+  private syncRenderCam(source: THREE.PerspectiveCamera): void {
+    this.renderCam.position.copy(source.position);
+    this.renderCam.quaternion.copy(source.quaternion);
+    if (
+      this.renderCam.fov !== source.fov ||
+      this.renderCam.aspect !== source.aspect
+    ) {
+      this.renderCam.fov = source.fov;
+      this.renderCam.aspect = source.aspect;
+      this.renderCam.updateProjectionMatrix();
+    }
+    this.renderCam.updateMatrixWorld();
   }
 }

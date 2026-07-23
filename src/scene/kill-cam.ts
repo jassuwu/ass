@@ -52,6 +52,11 @@ export class KillCam {
     return this.phase === "idle" && this.elapsed >= this.cooldownUntil;
   }
 
+  /** where the cinematography is looking — for focus pulling */
+  get focusPoint(): THREE.Vector3 {
+    return this.point;
+  }
+
   trigger(rig: CameraRig, point: THREE.Vector3, dir: THREE.Vector3): void {
     if (!this.idle) return;
     this.phase = "dive";
