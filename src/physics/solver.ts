@@ -19,6 +19,16 @@ export interface SolverParams {
   damping: number;
   /** hard displacement clamp, safety against heroic impulses */
   maxDisplacement: number;
+  /** contact dent depth per unit of slap strength, world units */
+  pressDepthScale: number;
+  /** seconds for the hand to drive in / stay planted / peel away */
+  pressAttackS: number;
+  pressHoldS: number;
+  pressReleaseS: number;
+  /** 1/s — how crisply flesh chases the hand through the press */
+  pressRate: number;
+  /** sideways flesh-splash velocity per unit strength */
+  splashGain: number;
 }
 
 // Tuned away from "jelly": flesh is taut (low compliance), heavily damped
@@ -30,7 +40,36 @@ export const defaultSolverParams: SolverParams = {
   shapeMemoryRate: 5,
   damping: 3.8,
   maxDisplacement: 0.55,
+  pressDepthScale: 0.075,
+  pressAttackS: 0.035,
+  pressHoldS: 0.045,
+  pressReleaseS: 0.11,
+  pressRate: 90,
+  splashGain: 0.5,
 };
+
+/**
+ * A landed hand, alive for ~200ms: flesh near the contact point is DRIVEN
+ * toward a dented target (not kicked), held there, then released. The dent
+ * is what a slap actually looks like — the jiggle is only the recovery.
+ */
+interface Press {
+  ids: number[];
+  w: number[];
+  /** REST positions — the dent is carved as an absolute target, so rapid
+   * consecutive slaps re-press to the same depth instead of ratcheting the
+   * flesh ever deeper (which buckles lattice cells into folded states the
+   * constraints are happy with — a permanent dent) */
+  base: Float32Array;
+  /** unit direction of the blow, pointing into the flesh */
+  ux: number;
+  uy: number;
+  uz: number;
+  depth: number;
+  age: number;
+}
+
+const smooth01 = (s: number) => s * s * (3 - 2 * s);
 
 export class XpbdSolver {
   readonly lattice: Lattice;
@@ -53,6 +92,9 @@ export class XpbdSolver {
   /** 1/s — how eagerly grabbed flesh follows the hand */
   grabRate = 45;
 
+  /** hands currently planted in the flesh (spanks in flight) */
+  private presses: Press[] = [];
+
   constructor(lattice: Lattice, params: Partial<SolverParams> = {}) {
     this.lattice = lattice;
     this.params = { ...defaultSolverParams, ...params };
@@ -71,6 +113,7 @@ export class XpbdSolver {
     this.pos.set(this.lattice.rest);
     this.prev.set(this.lattice.rest);
     this.vel.fill(0);
+    this.presses.length = 0;
     this.maxSpeed2 = 0;
     this.maxDisp2 = 0;
   }
@@ -117,6 +160,101 @@ export class XpbdSolver {
   endGrab(): void {
     this.grabbing = false;
     this.grabBase = null;
+  }
+
+  /** true while a landed hand is still in the flesh */
+  get pressing(): boolean {
+    return this.presses.length > 0;
+  }
+
+  /**
+   * A slap, done the way a slap actually works: the hand arrives and
+   * OCCUPIES SPACE. Flesh under the palm is driven inward to a dented
+   * target and held for a beat (the Press), the displaced volume squirts
+   * sideways around the rim (radial splash velocities), and only a small
+   * follow-through kick travels along the blow itself. The rebound jiggle
+   * is not injected — it is the lattice recovering once the hand leaves.
+   */
+  spank(
+    point: THREE.Vector3,
+    dir: THREE.Vector3,
+    strength: number,
+    radius: number,
+  ): void {
+    this.stirred = true;
+    const { pos, vel, lattice, params } = this;
+    const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    if (len < 1e-9) return;
+    const ux = dir.x / len;
+    const uy = dir.y / len;
+    const uz = dir.z / len;
+    // capped by the lattice resolution: a dent deeper than ~1.5 cells
+    // crushes the grid past the point where it can unfold again
+    const depth = Math.min(
+      0.05 + strength * params.pressDepthScale,
+      params.maxDisplacement * 0.8,
+      lattice.spacing * 1.5,
+    );
+    const sigma = radius * 0.55;
+    const inv2s2 = 1 / (2 * sigma * sigma);
+    const cutoff2 = (radius * 1.8) ** 2;
+    // rim profile peaks at d = sigma (the edge of the palm), normalized to 1
+    const rimNorm = Math.exp(0.5);
+    const followKick = strength * 0.3;
+    const splash = strength * params.splashGain;
+
+    const ids: number[] = [];
+    const w: number[] = [];
+    for (let i = 0; i < lattice.count; i++) {
+      const i3 = i * 3;
+      const dx = pos[i3] - point.x;
+      const dy = pos[i3 + 1] - point.y;
+      const dz = pos[i3 + 2] - point.z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > cutoff2) continue;
+      const g = Math.exp(-d2 * inv2s2);
+      ids.push(i);
+      w.push(g);
+      // follow-through: a little momentum still travels with the blow
+      vel[i3] += ux * followKick * g;
+      vel[i3 + 1] += uy * followKick * g;
+      vel[i3 + 2] += uz * followKick * g;
+      // splash: displaced flesh squirts sideways, away from the palm,
+      // strongest at the rim of contact where the volume has to go
+      const axial = dx * ux + dy * uy + dz * uz;
+      const lx = dx - ux * axial;
+      const ly = dy - uy * axial;
+      const lz = dz - uz * axial;
+      const lat = Math.sqrt(lx * lx + ly * ly + lz * lz);
+      if (lat > 1e-6) {
+        const d = Math.sqrt(d2);
+        const rim = (d / sigma) * g * rimNorm;
+        const f = (splash * rim) / lat;
+        vel[i3] += lx * f;
+        vel[i3 + 1] += ly * f;
+        vel[i3 + 2] += lz * f;
+      }
+    }
+    if (ids.length === 0) return;
+    const { rest } = lattice;
+    const base = new Float32Array(ids.length * 3);
+    for (let k = 0; k < ids.length; k++) {
+      const i3 = ids[k] * 3;
+      base[k * 3] = rest[i3];
+      base[k * 3 + 1] = rest[i3 + 1];
+      base[k * 3 + 2] = rest[i3 + 2];
+    }
+    this.presses.push({ ids, w, base, ux, uy, uz, depth, age: 0 });
+  }
+
+  /** press envelope: drive in fast, plant, peel away — 0 when spent */
+  private pressEnv(age: number): number {
+    const p = this.params;
+    if (age < p.pressAttackS) return smooth01(age / p.pressAttackS);
+    const held = age - p.pressAttackS - p.pressHoldS;
+    if (held < 0) return 1;
+    if (held >= p.pressReleaseS) return 0;
+    return 1 - smooth01(held / p.pressReleaseS);
   }
 
   step(dt: number): void {
@@ -166,6 +304,27 @@ export class XpbdSolver {
         }
       }
 
+      // landed hands: flesh chases the dented target through the press
+      // envelope. Anchored particles resist (musculature dents less), and
+      // the recovery on release is the lattice's own — never scripted.
+      for (const pr of this.presses) {
+        pr.age += h;
+        const e = this.pressEnv(pr.age);
+        if (e <= 0) continue;
+        const k = 1 - Math.exp(-params.pressRate * h);
+        const push = pr.depth * e;
+        for (let g = 0; g < pr.ids.length; g++) {
+          const wg = pr.w[g] * push;
+          const i3 = pr.ids[g] * 3;
+          const tx = pr.base[g * 3] + pr.ux * wg;
+          const ty = pr.base[g * 3 + 1] + pr.uy * wg;
+          const tz = pr.base[g * 3 + 2] + pr.uz * wg;
+          pos[i3] += (tx - pos[i3]) * k;
+          pos[i3 + 1] += (ty - pos[i3 + 1]) * k;
+          pos[i3 + 2] += (tz - pos[i3 + 2]) * k;
+        }
+      }
+
       // distance constraints, one XPBD iteration
       for (let c = 0; c < cA.length; c++) {
         const ia = cA[c] * 3;
@@ -204,6 +363,12 @@ export class XpbdSolver {
       for (let i = 0; i < n * 3; i++) {
         vel[i] = (pos[i] - prev[i]) * invH;
       }
+    }
+
+    if (this.presses.length > 0) {
+      const spent =
+        params.pressAttackS + params.pressHoldS + params.pressReleaseS;
+      this.presses = this.presses.filter((pr) => pr.age < spent);
     }
 
     // settle detection for the sleep state

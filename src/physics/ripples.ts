@@ -47,6 +47,10 @@ interface Ripple {
   aboveFold: boolean;
   age: number;
   amp: number;
+  /** seconds before the wave departs — while the hand is still planted */
+  delay: number;
+  /** radius the wave departs FROM — the rim of the contact, not a point */
+  startR: number;
 }
 
 const MAX_RIPPLES = 5;
@@ -61,10 +65,17 @@ export class RippleField {
     this.params = { ...defaultRippleParams, ...params };
   }
 
+  /**
+   * @param delayS sim-seconds before the wave departs (the hand's dwell —
+   *   displaced flesh only travels once the palm peels away)
+   * @param startR radius the front starts at (the rim of the contact patch)
+   */
   spawn(
     point: { x: number; y: number; z: number },
     power01: number,
     ampScale = 1,
+    delayS = 0,
+    startR = 0,
   ): void {
     const amp =
       this.params.maxAmp * (0.25 + 0.75 * Math.min(power01, 1)) * ampScale;
@@ -76,6 +87,8 @@ export class RippleField {
       aboveFold: point.y > FOLD_Y,
       age: 0,
       amp,
+      delay: delayS,
+      startR,
     });
     if (this.list.length > MAX_RIPPLES) this.list.shift();
   }
@@ -84,7 +97,9 @@ export class RippleField {
     const { temporalDecay } = this.params;
     for (const r of this.list) r.age += simDt;
     this.list = this.list.filter(
-      (r) => r.amp * Math.exp(-r.age * temporalDecay) > 0.0015,
+      (r) =>
+        r.age < r.delay ||
+        r.amp * Math.exp(-(r.age - r.delay) * temporalDecay) > 0.0015,
     );
   }
 
@@ -97,7 +112,9 @@ export class RippleField {
     const { speed, width, spatialDecay, temporalDecay } = this.params;
     let sum = 0;
     for (const r of this.list) {
-      const front = speed * r.age;
+      const effAge = r.age - r.delay;
+      if (effAge <= 0) continue;
+      const front = r.startR + speed * effAge;
       const dMin = Math.max(0, front - 3 * width);
       const dMax = front + 3 * width;
       const dx = px - r.x;
@@ -113,7 +130,9 @@ export class RippleField {
         -u *
         Math.exp(-u * u) *
         BULGE_NORM *
-        Math.exp(-d * spatialDecay - r.age * temporalDecay);
+        Math.exp(
+          -Math.max(0, d - r.startR) * spatialDecay - effAge * temporalDecay,
+        );
       // the crease decouples the cheeks
       if (Math.sign(px) !== r.side && Math.abs(px) > 0.06) {
         contribution *= CREASE_ATTEN;
