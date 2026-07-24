@@ -13,9 +13,12 @@ lavished on the dumbest possible subject, presented with total sincerity.
 - **Sculptural, never sexual.** Anonymous fragment framing (no face, no
   identity), product-photography lighting, deadpan presentation. The framing
   is the guardrail.
-- **One authored camera frame.** No orbit, no navigation — only cursor
-  micro-parallax and a slow breathing dolly. The future kill cam is the one
-  and only thing allowed to break the frame.
+- **One authored home frame, borrowable within clamps.** The composition is
+  authored; the visitor may borrow the camera (drag the void to orbit,
+  wheel/pinch to zoom) but only inside PG-13 clamps — yaw dies well before
+  the profile, so the front of the specimen does not exist. Cursor
+  micro-parallax and the breathing dolly ride on top. The kill cam is the
+  one and only thing allowed to actually break the frame.
 - **Effort is the punchline.** Photorealism is the bar (think RTX-texture-pack
   absurdity); physics must trigger "that's EXACTLY how it happens" recognition,
   not "nice simulation". Never ship a cheap version of anything visible.
@@ -43,13 +46,17 @@ commits with --no-verify, no co-author lines. Segmented conventional commits.
   single source of shape truth: render mesh, raycast proxy, physics
   inside-test and depth all derive from it). Will be replaced by a sculpted
   asset in the fidelity phase; keep the interface.
-- `src/scene/camera-rig.ts` — the authored frame. Distance solved from
-  aspect (max of width-fit/height-fit; ultrawide letterboxes into side voids).
+- `src/scene/camera-rig.ts` — the authored home frame + clamped borrowed
+  orbit/zoom. Distance solved from aspect (max of width-fit/height-fit;
+  ultrawide letterboxes into side voids).
 - `src/physics/` — XPBD: `lattice.ts` (volumetric particle grid + graded
   anchor field: body side, torso, thighs, depth-based core hold),
   `solver.ts` (small-substeps XPBD), `skin.ts` (trilinear embedding).
 - `src/interaction/slap.ts` — tap / hold-to-charge / cursor brush. Exposes
-  `charge` for audio.
+  `charge` for audio. Impacts go through `solver.spank()` (contact press:
+  dent in → sideways splash → lattice recovers), never a bare impulse.
+- `src/interaction/orbit.ts` — void-drag orbit + wheel/pinch zoom. Shares
+  the pointer with slap via `blocked`/`cancel`.
 - Tuning: append `?dev` for the lil-gui bench (dynamically imported, never in
   the plain bundle).
 
@@ -68,7 +75,11 @@ Done: authored frame, body-column placeholder, XPBD flesh (layered core hold),
 tap/hold/brush interaction, dev bench, audio layer (room tone, foley,
 heartbeat), kill cam (full-charge trigger, slow-mo, cinema bars, stretched
 audio), impact ripple wavefronts, PMREM environment fill, procedural TSL skin
-material, post pipeline (dof with live focus pull, bloom, vignette, grain).
+material, post pipeline (dof with live focus pull, bloom, vignette, grain),
+contact-press slap model (hand dents in, flesh splashes sideways, wavefront
+departs from the contact rim as the palm peels away), accumulating spank
+flush (per-vertex redness, blotch-modulated, shader-side decay), void-drag
+orbit + wheel/pinch zoom within PG-13 clamps.
 Next: sculpted asset with UVs + real skin texture maps (pores need textures —
 procedural bump was punted, @types lag noted in render/pipeline.ts) → perf
 pass / WebGPU compute port of solver+skinning if needed → deploy + domain.

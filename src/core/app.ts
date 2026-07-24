@@ -3,6 +3,7 @@ import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
 import * as THREE from "three/webgpu";
 import { AudioDirector } from "../audio/director";
 import { Pointer } from "../input/pointer";
+import { OrbitControl } from "../interaction/orbit";
 import { SlapInteraction } from "../interaction/slap";
 import { buildLattice } from "../physics/lattice";
 import { RippleField } from "../physics/ripples";
@@ -25,6 +26,7 @@ export class App {
   private solver: XpbdSolver;
   private skin: MeshSkin;
   private slap: SlapInteraction;
+  private orbit: OrbitControl;
   private audio = new AudioDirector();
   private killCam = new KillCam();
   private ripples = new RippleField();
@@ -68,8 +70,19 @@ export class App {
       specimen.proxy,
       this.solver,
     );
-    this.slap.onImpact = (power01, point) => {
-      this.ripples.spawn(point, power01);
+    // press the void and drag to orbit; wheel/pinch to zoom. The two
+    // pointer layers coordinate: orbit-drag suppresses brushing, a pinch
+    // cancels a press in flight.
+    this.orbit = new OrbitControl(document.body, this.rig, specimen.proxy);
+    this.slap.blocked = () => this.orbit.dragging;
+    this.orbit.onPinchStart = () => this.slap.cancel();
+    // the wavefront departs only when the hand peels away, from the rim of
+    // the contact patch — a slap is not a stone dropped in a pond
+    const waveLag = () =>
+      this.solver.params.pressAttackS + this.solver.params.pressHoldS;
+    this.slap.onImpact = (power01, point, _dir, radius) => {
+      this.ripples.spawn(point, power01, 1, waveLag(), radius * 0.8);
+      specimen.flush.splat(point, radius, power01);
       this.audio.impact(power01);
     };
     // a full charge earns the kill cam — unannounced, undocumented. The
@@ -80,8 +93,9 @@ export class App {
       const kp = this.killCam.params;
       this.audio.holdBreath();
       this.killCam.trigger(this.rig, point, dir, () => {
-        this.solver.impulse(point, dir, power, radius);
-        this.ripples.spawn(point, power01, 1.35);
+        this.solver.spank(point, dir, power, radius);
+        this.ripples.spawn(point, power01, 1.35, waveLag(), radius * 0.8);
+        specimen.flush.splat(point, radius * 1.15, power01);
         this.audio.impactCinema(power01, kp.freezeS + kp.crawlS + kp.returnS);
       });
       return true;
@@ -132,6 +146,7 @@ export class App {
       this.ripples,
       this.pipeline,
       this.killCam,
+      this.stage.specimen.flush,
     );
     if (new URLSearchParams(window.location.search).has("dev")) {
       const { default: Stats } = await import("stats-gl");
@@ -157,7 +172,9 @@ export class App {
     this.timer.update();
     const dt = THREE.MathUtils.clamp(this.timer.getDelta(), 1 / 240, 1 / 30);
     this.slap.enabled = !this.killCam.active;
+    this.orbit.enabled = !this.killCam.active;
     this.slap.update();
+    this.stage.specimen.flush.update();
     this.audio.update(this.slap.charge);
     this.killCam.update(dt, this.rig);
 
@@ -178,7 +195,10 @@ export class App {
       this.solver.stirred = false;
     }
     const busy =
-      this.slap.engaged || this.ripples.active || this.killCam.active;
+      this.slap.engaged ||
+      this.solver.pressing ||
+      this.ripples.active ||
+      this.killCam.active;
     if (busy) this.simSleeping = false;
     if (!this.simSleeping) {
       const simDt = dt * this.killCam.timeScale;

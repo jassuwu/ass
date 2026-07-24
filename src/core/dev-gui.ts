@@ -2,6 +2,7 @@ import type { SlapInteraction } from "../interaction/slap";
 import type { RippleField } from "../physics/ripples";
 import type { XpbdSolver } from "../physics/solver";
 import type { Pipeline } from "../render/pipeline";
+import type { FlushField } from "../scene/flush";
 import type { KillCam } from "../scene/kill-cam";
 
 /**
@@ -14,6 +15,7 @@ export async function maybeAttachDevGui(
   ripples: RippleField,
   pipeline: Pipeline | null,
   killCam: KillCam,
+  flush: FlushField,
 ): Promise<void> {
   if (!new URLSearchParams(window.location.search).has("dev")) return;
   const { default: GUI } = await import("lil-gui");
@@ -26,6 +28,19 @@ export async function maybeAttachDevGui(
   s.add(solver.params, "shapeMemoryRate", 0, 12);
   s.add(solver.params, "damping", 0, 6);
   s.add(solver.params, "maxDisplacement", 0.1, 1.2);
+
+  const c = gui.addFolder("contact");
+  c.add(solver.params, "pressDepthScale", 0, 0.2);
+  c.add(solver.params, "pressAttackS", 0.01, 0.15);
+  c.add(solver.params, "pressHoldS", 0, 0.25);
+  c.add(solver.params, "pressReleaseS", 0.02, 0.4);
+  c.add(solver.params, "pressRate", 20, 200);
+  c.add(solver.params, "splashGain", 0, 1.5);
+
+  const f = gui.addFolder("flush");
+  f.add(flush.params, "gain", 0, 1);
+  f.add(flush.params, "spread", 0.5, 3);
+  f.add(flush.params, "fadeS", 5, 120);
 
   const i = gui.addFolder("slap");
   i.add(slap.params, "tapPower", 0, 2);

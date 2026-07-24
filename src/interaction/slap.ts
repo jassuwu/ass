@@ -14,6 +14,8 @@ import type { XpbdSolver } from "../physics/solver";
  * - press and DRAG (early in a hold): becomes a grab — a handful of flesh
  *   follows the hand, and letting go flings it with the hand's velocity.
  *   The most tactile thing here.
+ * (Pressing the VOID and dragging orbits the camera instead — see
+ * OrbitControl. The two layers share the pointer via `blocked`/`cancel`.)
  */
 export interface SlapParams {
   tapPower: number;
@@ -72,9 +74,18 @@ export class SlapInteraction {
   charge = 0;
   /** while false, input is ignored — time has been taken from the visitor */
   enabled = true;
-  /** fired on delivered impact with normalized power 0..1, point and direction */
+  /** when set and true, another gesture owns the pointer — no new presses
+   * or brushes (the void-drag orbit uses this) */
+  blocked: (() => boolean) | null = null;
+  /** fired on delivered impact: normalized power 0..1, point, direction,
+   * and the contact radius */
   onImpact:
-    | ((power01: number, point: THREE.Vector3, dir: THREE.Vector3) => void)
+    | ((
+        power01: number,
+        point: THREE.Vector3,
+        dir: THREE.Vector3,
+        radius: number,
+      ) => void)
     | null = null;
   /**
    * asked before a release is applied. Returning true claims the impact:
@@ -135,6 +146,15 @@ export class SlapInteraction {
     return this.mode !== "idle";
   }
 
+  /** abandon the gesture in flight without delivering anything — used when
+   * a pinch claims the pointers mid-press */
+  cancel(): void {
+    if (this.mode === "grab") this.solver.endGrab();
+    this.mode = "idle";
+    this.charge = 0;
+    this.handVel.set(0, 0, 0);
+  }
+
   update(): void {
     this.charge =
       this.mode === "pending"
@@ -184,7 +204,7 @@ export class SlapInteraction {
   }
 
   private onDown(e: PointerEvent): void {
-    if (!this.enabled) return;
+    if (!this.enabled || this.blocked?.()) return;
     const hit = this.cast(e.clientX, e.clientY);
     if (!hit) return;
     this.mode = "pending";
@@ -254,8 +274,9 @@ export class SlapInteraction {
     }
     const power01 = Math.min(1, power / (p.tapPower + p.chargeBonus));
     if (this.onIntercept?.(power01, point, dir, power, radius)) return;
-    this.solver.impulse(point, dir, power, radius);
-    this.onImpact?.(power01, point, dir);
+    // not a kick — a landed hand: dent, splash, then the lattice recovers
+    this.solver.spank(point, dir, power, radius);
+    this.onImpact?.(power01, point, dir, radius);
   }
 
   private onMove(e: PointerEvent): void {
@@ -305,7 +326,7 @@ export class SlapInteraction {
       }
       return;
     }
-    if (this.mode !== "idle" || !this.enabled) return;
+    if (this.mode !== "idle" || !this.enabled || this.blocked?.()) return;
 
     // brush
     const now = performance.now();
