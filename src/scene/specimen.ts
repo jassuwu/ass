@@ -11,6 +11,7 @@ import {
   vec3,
 } from "three/tsl";
 import * as THREE from "three/webgpu";
+import { FlushField } from "./flush";
 import { surfaceNets } from "./surface-nets";
 
 export interface Specimen {
@@ -24,6 +25,8 @@ export interface Specimen {
    * Drives the flesh layering — firm musculature inside, soft fat outside.
    */
   depth01: (p: THREE.Vector3) => number;
+  /** accumulated spank redness — splatted by the app on every impact */
+  flush: FlushField;
 }
 
 /**
@@ -207,7 +210,7 @@ function isInside(p: THREE.Vector3): boolean {
  * procedural tonal gradients tint the scan so the hue stays authored while
  * the pore-level structure is photographic.
  */
-function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
+function createSkinMaterial(flush: FlushField): THREE.MeshPhysicalNodeMaterial {
   const material = new THREE.MeshPhysicalNodeMaterial({
     sheen: 0.2,
     sheenRoughness: 0.6,
@@ -259,11 +262,22 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
     .add(0.5);
   const fine = mx_fractal_noise_float(positionWorld.mul(6.5)).mul(0.5).add(0.5);
   const tint = mix(mix(base, pale, broad.mul(0.35)), flushed, fine.mul(0.22));
+  // spank flush: blood rising under repeated impacts, mottled by the fine
+  // noise — real irritation is blotchy, never an even airbrush. The
+  // 0.55..1.15 range keeps the mottle alive even where accumulation has
+  // saturated the attribute.
+  const flushAmt = flush.node.mul(fine.mul(0.6).add(0.55)).clamp(0, 1);
   // the scan samples in LINEAR space here — its average sits near 0.35,
   // so the normalization factor is ~2.8, not ~1.5 (getting this wrong
   // darkens the albedo 40% and the whole frame collapses into deep red)
   const scanLum = tp(scanColor, uvScale).rgb.dot(vec3(0.299, 0.587, 0.114));
-  material.colorNode = tint.mul(scanLum.mul(2.8).clamp(0.65, 1.4));
+  const lumF = scanLum.mul(2.8).clamp(0.65, 1.4);
+  // flushed skin goes toward a BRIGHT saturated red (darker mixes read as
+  // bruise, not slap) and FLATTENS the scan's tile-scale luminance swings —
+  // blood evens out surface tone, and unflattened they amplify into
+  // blocky chroma patches under the red
+  const flushedSkin = color(0xd0472e).mul(lumF.mul(0.35).add(0.65));
+  material.colorNode = mix(tint.mul(lumF), flushedSkin, flushAmt.mul(0.6));
 
   // scanned normals, UDN triplanar blend, two octaves
   const decode = (t: ReturnType<typeof texture>) => t.xy.mul(2).sub(1);
@@ -284,26 +298,31 @@ function createSkinMaterial(): THREE.MeshPhysicalNodeMaterial {
       .normalize(),
   );
 
+  // inflamed skin swells slightly shiny — a small flush-driven tightening
   material.roughnessNode = tp(scanRough, uvScale)
     .r.mul(0.42)
     .add(tp(scanRough, uvScale2).r.mul(0.24))
-    .add(0.14);
+    .add(0.14)
+    .sub(flushAmt.mul(0.06));
 
   // faked subsurface: deep red bleeding out at grazing angles, gated by the
-  // scan's subsurface/thickness map so it varies like real tissue
+  // scan's subsurface/thickness map so it varies like real tissue — and
+  // deepening where the flush pools
   const viewDir = cameraPosition.sub(positionWorld).normalize();
   const fresnel = normalWorld.dot(viewDir).clamp(0, 1).oneMinus().pow(3);
   const sssMask = tp(scanSss, uvScale).r.mul(0.8).add(0.2);
-  material.emissiveNode = color(0x3d0d05).mul(fresnel).mul(sssMask).mul(0.35);
+  material.emissiveNode = color(0x3d0d05)
+    .mul(fresnel)
+    .mul(sssMask)
+    .mul(flushAmt.mul(0.45).add(0.35));
 
   return material;
 }
 
 export function createPlaceholderSpecimen(): Specimen {
-  const mesh = new THREE.Mesh(
-    surfaceNets(bodySdf, BOUNDS_MIN, BOUNDS_MAX, 0.026),
-    createSkinMaterial(),
-  );
+  const geometry = surfaceNets(bodySdf, BOUNDS_MIN, BOUNDS_MAX, 0.026);
+  const flush = new FlushField(geometry);
+  const mesh = new THREE.Mesh(geometry, createSkinMaterial(flush));
   mesh.castShadow = true;
   mesh.receiveShadow = true;
 
@@ -313,5 +332,5 @@ export function createPlaceholderSpecimen(): Specimen {
   );
   proxy.updateMatrixWorld(true);
 
-  return { mesh, proxy, isInside, depth01 };
+  return { mesh, proxy, isInside, depth01, flush };
 }
