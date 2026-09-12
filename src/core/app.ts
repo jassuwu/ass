@@ -92,7 +92,7 @@ export class App {
         0,
         r.radius * 0.8,
       );
-      specimen.flush.splat(point, r.radius * (1 + 0.15 * depth01), depth01);
+      specimen.flush.print({ ...r, depth01 });
     };
     this.solver.onContact = (r) =>
       this.audio.contact(
@@ -100,11 +100,12 @@ export class App {
         r.area,
         r.firmness,
         this.killCam.active ? 4 : 1,
+        r.x,
       );
-    this.slap.onImpact = (power01, _point, _dir, radius, swipe01) => {
-      this.audio.impact(power01, radius, swipe01);
+    this.slap.onImpact = (power01, point, _dir, radius, swipe01) => {
+      this.audio.impact(power01, radius, swipe01, point.x);
     };
-    this.slap.onFling = (power01) => this.audio.fling(power01);
+    this.slap.onFling = (power01, point) => this.audio.fling(power01, point.x);
     // a full charge earns the kill cam — unannounced, undocumented. The
     // release is intercepted BEFORE the impulse: the camera travels first,
     // and the hit lands on camera once the lens is seated.
@@ -121,7 +122,11 @@ export class App {
       this.audio.holdBreath();
       this.killCam.trigger(this.rig, point, dir, () => {
         this.solver.slap(point, dir, tangential, power, radius);
-        this.audio.impactCinema(power01, kp.freezeS + kp.crawlS + kp.returnS);
+        this.audio.impactCinema(
+          power01,
+          kp.freezeS + kp.crawlS + kp.returnS,
+          point.x,
+        );
       });
       return true;
     };

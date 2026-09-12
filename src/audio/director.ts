@@ -113,28 +113,40 @@ export class AudioDirector {
   }
 
   /** the palm meets the skin; power01 in 0..1, radius in world units */
-  impact(power01: number, radius: number, swipe01: number): void {
+  impact(power01: number, radius: number, swipe01: number, x?: number): void {
     const g = this.engine.current;
     if (!g) return;
     this.nextBeat = 0;
-    playContact(g, this.bank, this.levels, { power01, radius, swipe01 });
+    playContact(g, this.bank, this.levels, { power01, radius, swipe01, x });
   }
 
   /**
    * the flesh under the palm bottoms out — reported by the solver, so in
    * the kill cam it arrives as late as the slow motion makes it
    */
-  contact(depth01: number, area: number, firmness: number, stretch = 1): void {
+  contact(
+    depth01: number,
+    area: number,
+    firmness: number,
+    stretch = 1,
+    x?: number,
+  ): void {
     const g = this.engine.current;
     if (!g) return;
-    playBody(g, this.bank, this.levels, { depth01, area, firmness, stretch });
+    playBody(g, this.bank, this.levels, {
+      depth01,
+      area,
+      firmness,
+      stretch,
+      x,
+    });
   }
 
   /** a grabbed handful let go at speed */
-  fling(power01: number): void {
+  fling(power01: number, x?: number): void {
     const g = this.engine.current;
     if (!g) return;
-    playPat(g, this.bank, this.levels, power01);
+    playPat(g, this.bank, this.levels, power01, x);
   }
 
   /**
@@ -142,7 +154,7 @@ export class AudioDirector {
    * the room gone silent, a sub swell underneath — then the world fades back.
    * @param durationS real-time length of the slow-motion sequence
    */
-  impactCinema(power01: number, durationS: number): void {
+  impactCinema(power01: number, durationS: number, x?: number): void {
     const g = this.engine.current;
     if (!g) return;
     this.nextBeat = 0;
@@ -155,6 +167,7 @@ export class AudioDirector {
       radius: 0.6,
       swipe01: 0,
       stretch: 4,
+      x,
     });
 
     if (this.roomGain) {

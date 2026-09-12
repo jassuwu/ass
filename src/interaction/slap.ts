@@ -49,7 +49,7 @@ export const defaultSlapParams: SlapParams = {
   chargeTimeMs: 1100,
   tapThresholdMs: 180,
   radius: 0.45,
-  chargeRadiusBonus: 0.3,
+  chargeRadiusBonus: 0.12,
   brushPower: 0.22,
   brushRadius: 0.35,
   grabRadius: 0.55,
@@ -107,7 +107,7 @@ export class SlapInteraction {
   /** smoothed brush speed over the skin, world u/s — for the friction sound */
   brushSpeed = 0;
   /** a grabbed handful let go at speed; power01 in 0..1 */
-  onFling: ((power01: number) => void) | null = null;
+  onFling: ((power01: number, point: THREE.Vector3) => void) | null = null;
 
   private readonly camera: THREE.Camera;
   private readonly proxy: THREE.Mesh;
@@ -240,7 +240,7 @@ export class SlapInteraction {
         this.tmpA.copy(this.grabOrigin).add(this.grabOffset);
         const strength = Math.min(p.flingMax, speed * p.flingGain);
         this.solver.impulse(this.tmpA, this.handVel, strength, p.grabRadius);
-        this.onFling?.(strength / p.flingMax);
+        this.onFling?.(strength / p.flingMax, this.tmpA);
       }
       this.handVel.set(0, 0, 0);
       return;

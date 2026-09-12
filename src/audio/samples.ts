@@ -32,6 +32,8 @@ export interface PlayOptions {
   lowpass?: number;
   /** reverb send, 0..1 of the gain */
   wet?: number;
+  /** stereo position, -1 left .. 1 right */
+  pan?: number;
 }
 
 export class SampleBank {
@@ -97,10 +99,18 @@ export class SampleBank {
       tail = lp;
     }
     tail.connect(gain);
-    gain.connect(dry);
+    let out: AudioNode = gain;
+    if (o.pan) {
+      const panner = ctx.createStereoPanner();
+      panner.pan.value = Math.min(Math.max(o.pan, -1), 1);
+      gain.connect(panner);
+      out = panner;
+    }
+    out.connect(dry);
     if (o.wet && o.wet > 0) {
       const send = ctx.createGain();
       send.gain.value = o.wet;
+      // the room hears it from the middle; only the direct sound is placed
       gain.connect(send).connect(wet);
     }
     src.start(o.when ?? ctx.currentTime);
