@@ -1,5 +1,5 @@
 import * as THREE from "three/webgpu";
-import type { XpbdSolver } from "../physics/solver";
+import type { FleshControls } from "../physics/flesh";
 
 /**
  * The entire interaction vocabulary, none of it explained on screen:
@@ -112,7 +112,7 @@ export class SlapInteraction {
   private readonly camera: THREE.Camera;
   private readonly dom: HTMLElement;
   private readonly proxy: THREE.Mesh;
-  private readonly solver: XpbdSolver;
+  private readonly solver: FleshControls;
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
   private mode: "idle" | "pending" | "grab" = "idle";
@@ -138,7 +138,7 @@ export class SlapInteraction {
     dom: HTMLElement,
     camera: THREE.Camera,
     proxy: THREE.Mesh,
-    solver: XpbdSolver,
+    solver: FleshControls,
     params: Partial<SlapParams> = {},
   ) {
     this.camera = camera;

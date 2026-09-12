@@ -41,11 +41,17 @@ commits with --no-verify, no co-author lines. Segmented conventional commits.
 
 ## Architecture
 
-- `src/core/app.ts` — wiring + frame loop (physics → skin → camera → render)
-- `src/scene/specimen.ts` — parametric body column (`bodyRadius()` is the
-  single source of shape truth: render mesh, raycast proxy, physics
-  inside-test and depth all derive from it). Will be replaced by a sculpted
-  asset in the fidelity phase; keep the interface.
+- `src/core/app.ts` — wiring + frame loop (flesh → camera → render)
+- `src/scene/body-sdf.ts` — the body as a pure signed distance field (no
+  three.js, so the physics worker evaluates it too). `specimen.ts` meshes
+  it with surface nets, builds the skin material, and exposes the
+  raycast proxy and the flush field.
+- `src/physics/flesh.ts` — what the app talks to. Gestures queue as
+  commands; each frame they go to `engine.ts` (lattice + solver + ripples +
+  skinning + sleep) which runs in `worker.ts` off the main thread, and the
+  deformed positions and normals come back one frame later. Falls back to
+  running the same engine inline if the worker fails. The dev bench pushes
+  parameter changes across with `syncParams()`.
 - `src/scene/camera-rig.ts` — the authored home frame + clamped borrowed
   orbit/zoom. Distance solved from aspect (max of width-fit/height-fit;
   ultrawide letterboxes into side voids).
@@ -55,17 +61,25 @@ commits with --no-verify, no co-author lines. Segmented conventional commits.
   volume conservation, tension-stiffer edges, neighbour viscosity),
   `hand.ts` (the palm as a rigid elliptical collider with a dynamic
   drive/dwell/peel and sticky friction — depth is an outcome of arrival
-  speed, arm push and the flesh's reaction), `skin.ts` (trilinear embedding).
-- `src/interaction/slap.ts` — tap / hold-to-charge / cursor brush. Exposes
-  `charge` and `brushSpeed` for audio. Impacts go through `solver.slap()`
-  (a Hand lands), never a bare impulse. The solver reports `onContact`
-  (palm bottomed out: depth, area, firmness) and `onRelease` (palm peeling);
-  ripples, flush and the body of the sound read from those, not from power.
-- `src/audio/` — all synthesised. `foley.ts` models the slap as a cavity
-  clap (resonant bands pitched by palm size and squeeze) at contact plus a
-  damped two-mode body thump when the solver says the flesh bottomed out;
-  brush is speed-gated friction noise; the room is early reflections plus
-  a damped diffuse tail. No pitch sweeps, no sub outside the kill cam.
+  speed, arm push and the flesh's reaction; also the sliding fingertip the
+  brush drives), `skin.ts` (trilinear embedding on raw arrays).
+- `src/interaction/slap.ts` — tap / hold-to-charge / fingertip brush.
+  Exposes `charge` and `brushSpeed` for audio. Impacts go through
+  `flesh.slap()` (a Hand lands), the brush through `flesh.touch()`, never a
+  bare impulse. The flesh reports `onContact` (palm bottomed out: depth,
+  area, firmness) and `onRelease` (palm peeling, with the palm's frame);
+  the hand-print flush, the ripples and the body of the sound read from
+  those, not from power.
+- `src/audio/` — recorded foley. `samples.ts` loads the CC0 slices in
+  `public/sfx/` (sources in `docs/sfx-sources.md`); `foley.ts` layers a
+  recorded crack at contact and a recorded buttock hit when the flesh
+  bottoms out, panned by cheek, at quarter speed and closer in the kill
+  cam; the brush is a recorded caress gated by speed; the heartbeat is a
+  recording. The room is early reflections plus a damped diffuse tail.
+- Lifecycle: a poster in `index.html` holds the frame until the first
+  presented frame sets `data-ready`; hidden tabs pause everything; WebGPU
+  device loss retries once with WebGL (`render/recovery.ts`);
+  prefers-reduced-motion stills the camera and skips the kill cam dive.
 - `src/interaction/orbit.ts` — void-drag orbit + wheel/pinch zoom. Shares
   the pointer with slap via `blocked`/`cancel`.
 - Tuning: append `?dev` for the lil-gui bench (dynamically imported, never in
@@ -79,6 +93,11 @@ commits with --no-verify, no co-author lines. Segmented conventional commits.
 - Frame dt must be clamped above zero: dt=0 → substep h=0 → NaN cascade.
 - The physics lattice only spans the band around the cheeks (y ∈ [-1.75, 1.5]);
   out-of-frame flesh rides the anchored boundary via clamped skin bindings.
+- Everything under `src/physics/` and `src/scene/body-sdf.ts` must stay free
+  of three.js imports (types only): it is bundled into the worker.
+- Verify headlessly with Playwright (`@playwright/test` in node_modules,
+  `chromium` channel, `--enable-unsafe-webgpu`); a screenshot takes ~200 ms
+  so judge contact dynamics with `bun run test` traces, not stills.
 
 ## Roadmap state (July 2026)
 

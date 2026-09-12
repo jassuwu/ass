@@ -1,15 +1,33 @@
-import * as THREE from "three/webgpu";
-
 /**
  * Volumetric particle lattice sampled from the specimen's inside-test.
  * Particles sit on grid nodes belonging to occupied cells (occupied = any
  * corner or center inside the surface, dilated one ring so the render mesh
  * is always embedded in complete cells).
  */
+export interface Vec3Like {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface Bounds {
+  min: Vec3Like;
+  max: Vec3Like;
+}
+
+const smoothstep = (x: number, lo: number, hi: number) => {
+  const t = Math.min(Math.max((x - lo) / (hi - lo), 0), 1);
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * Pure: no three.js, so the same lattice builds on the main thread or in
+ * a worker. Inside-test and depth take plain coordinates.
+ */
 export interface Lattice {
   count: number;
   spacing: number;
-  origin: THREE.Vector3;
+  origin: Vec3Like;
   nx: number;
   ny: number;
   nz: number;
@@ -49,13 +67,21 @@ const CONSTRAINT_OFFSETS: ReadonlyArray<readonly [number, number, number]> = [
 ];
 
 export function buildLattice(
-  isInside: (p: THREE.Vector3) => boolean,
-  depth01: (p: THREE.Vector3) => number,
-  bounds: THREE.Box3,
+  isInside: (x: number, y: number, z: number) => boolean,
+  depth01: (x: number, y: number, z: number) => number,
+  bounds: Bounds,
   spacing: number,
 ): Lattice {
-  const origin = bounds.min.clone().subScalar(spacing);
-  const size = bounds.getSize(new THREE.Vector3()).addScalar(2 * spacing);
+  const origin = {
+    x: bounds.min.x - spacing,
+    y: bounds.min.y - spacing,
+    z: bounds.min.z - spacing,
+  };
+  const size = {
+    x: bounds.max.x - bounds.min.x + 2 * spacing,
+    y: bounds.max.y - bounds.min.y + 2 * spacing,
+    z: bounds.max.z - bounds.min.z + 2 * spacing,
+  };
   const nx = Math.ceil(size.x / spacing) + 1;
   const ny = Math.ceil(size.y / spacing) + 1;
   const nz = Math.ceil(size.z / spacing) + 1;
@@ -69,24 +95,19 @@ export function buildLattice(
 
   // occupancy per cell
   const occupied = new Uint8Array(cellsX * cellsY * cellsZ);
-  const p = new THREE.Vector3();
   for (let k = 0; k < cellsZ; k++) {
     for (let j = 0; j < cellsY; j++) {
       for (let i = 0; i < cellsX; i++) {
         let hit = isInside(
-          p.set(
-            origin.x + (i + 0.5) * spacing,
-            origin.y + (j + 0.5) * spacing,
-            origin.z + (k + 0.5) * spacing,
-          ),
+          origin.x + (i + 0.5) * spacing,
+          origin.y + (j + 0.5) * spacing,
+          origin.z + (k + 0.5) * spacing,
         );
         for (let c = 0; c < 8 && !hit; c++) {
           hit = isInside(
-            p.set(
-              origin.x + (i + (c & 1)) * spacing,
-              origin.y + (j + ((c >> 1) & 1)) * spacing,
-              origin.z + (k + ((c >> 2) & 1)) * spacing,
-            ),
+            origin.x + (i + (c & 1)) * spacing,
+            origin.y + (j + ((c >> 1) & 1)) * spacing,
+            origin.z + (k + ((c >> 2) & 1)) * spacing,
           );
         }
         if (hit) occupied[cellIndex(i, j, k)] = 1;
@@ -146,7 +167,6 @@ export function buildLattice(
   }
 
   const rest = new Float32Array(count * 3);
-  const q0 = new THREE.Vector3();
   for (let k = 0; k < nz; k++) {
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
@@ -161,9 +181,7 @@ export function buildLattice(
 
   const inside = new Uint8Array(count);
   for (let a = 0; a < count; a++) {
-    inside[a] = isInside(q0.set(rest[a * 3], rest[a * 3 + 1], rest[a * 3 + 2]))
-      ? 1
-      : 0;
+    inside[a] = isInside(rest[a * 3], rest[a * 3 + 1], rest[a * 3 + 2]) ? 1 : 0;
   }
 
   // anchor field: the body owns the far side and the lower back;
@@ -179,14 +197,13 @@ export function buildLattice(
   // only the outer fat layer is free — this is what separates flesh from jelly
   const CORE_HOLD = 0.5;
   const anchorW = new Float32Array(count);
-  const q = new THREE.Vector3();
   for (let a = 0; a < count; a++) {
     const zn = (rest[a * 3 + 2] - zMin) / (zMax - zMin);
     const y = rest[a * 3 + 1];
     const back = Math.max(0, 1 - zn * 1.7) ** 1.6;
-    const top = 0.6 * THREE.MathUtils.smoothstep(y, 0.45, 1.0);
+    const top = 0.6 * smoothstep(y, 0.45, 1.0);
     // thighs are musculature: they carry a ripple but barely jiggle
-    const bottom = 0.55 * THREE.MathUtils.smoothstep(-y, 0.85, 1.6);
+    const bottom = 0.55 * smoothstep(-y, 0.85, 1.6);
     // the sacrum: bone right under the skin between the cheeks' upper
     // halves — that region does not wobble
     const sacrum =
@@ -194,8 +211,7 @@ export function buildLattice(
       Math.exp(-((rest[a * 3] / 0.4) ** 2)) *
       Math.exp(-(((y - 0.55) / 0.4) ** 2));
     const core =
-      CORE_HOLD *
-      depth01(q.set(rest[a * 3], rest[a * 3 + 1], rest[a * 3 + 2])) ** 1.5;
+      CORE_HOLD * depth01(rest[a * 3], rest[a * 3 + 1], rest[a * 3 + 2]) ** 1.5;
     anchorW[a] = Math.min(1, back + top + bottom + sacrum + core);
   }
 

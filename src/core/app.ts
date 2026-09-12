@@ -5,10 +5,8 @@ import { AudioDirector } from "../audio/director";
 import { Pointer } from "../input/pointer";
 import { OrbitControl } from "../interaction/orbit";
 import { SlapInteraction } from "../interaction/slap";
-import { buildLattice } from "../physics/lattice";
-import { RippleField } from "../physics/ripples";
-import { MeshSkin } from "../physics/skin";
-import { XpbdSolver } from "../physics/solver";
+import { FleshEngine } from "../physics/engine";
+import { Flesh } from "../physics/flesh";
 import { Pipeline } from "../render/pipeline";
 import { recoverRenderer, useWebGL } from "../render/recovery";
 import { CameraRig } from "../scene/camera-rig";
@@ -27,19 +25,15 @@ export class App {
   private rig = new CameraRig();
   private pointer = new Pointer();
   private timer = new THREE.Timer();
-  private solver: XpbdSolver;
-  private skin: MeshSkin;
+  private flesh: Flesh;
   private slap: SlapInteraction;
   private orbit: OrbitControl;
   private audio = new AudioDirector();
   private killCam = new KillCam();
-  private ripples = new RippleField();
   /** the camera actually rendered — mirrors rig or kill cam each frame,
    * so the post pipeline's pass() can bind a single camera object */
   private renderCam = new THREE.PerspectiveCamera(20, 1, 0.05, 100);
   private pipeline: Pipeline | null = null;
-  /** physics sleep: at rest the sim and skinning cost exactly nothing */
-  private simSleeping = false;
   private stats: { update: () => void } | null = null;
   /** the GPU is gone; the loop must not touch it again */
   private failed = false;
@@ -62,28 +56,21 @@ export class App {
       this.rig.reducedMotion = motion.matches;
     });
     const { specimen } = this.stage;
-    specimen.mesh.geometry.computeBoundingBox();
-    const bounds = (
-      specimen.mesh.geometry.boundingBox ?? new THREE.Box3()
-    ).clone();
-    // simulate only the band around the cheeks; the distant torso and legs
-    // are out of frame and ride the anchored lattice boundary
-    bounds.min.y = Math.max(bounds.min.y, -1.75);
-    bounds.max.y = Math.min(bounds.max.y, 1.5);
-    this.solver = new XpbdSolver(
-      buildLattice(
-        specimen.isInside,
-        specimen.depth01,
-        bounds,
-        LATTICE_SPACING,
-      ),
+    // deformations are bounded; grow the bounding sphere once instead of
+    // recomputing it per frame
+    specimen.mesh.geometry.computeBoundingSphere();
+    if (specimen.mesh.geometry.boundingSphere)
+      specimen.mesh.geometry.boundingSphere.radius *= 1.4;
+    this.flesh = new Flesh(
+      specimen.mesh,
+      FleshEngine.defaultBounds(),
+      LATTICE_SPACING,
     );
-    this.skin = new MeshSkin(this.solver.lattice, specimen.mesh);
     this.slap = new SlapInteraction(
       this.renderer.domElement,
       this.rig.camera,
       specimen.proxy,
-      this.solver,
+      this.flesh,
     );
     // press the void and drag to orbit; wheel/pinch to zoom. The two
     // pointer layers coordinate: orbit-drag suppresses brushing, a pinch
@@ -95,25 +82,13 @@ export class App {
     );
     this.slap.blocked = () => this.orbit.dragging;
     this.orbit.onPinchStart = () => this.slap.cancel();
-    // the contact is the physics' to report: the wavefront departs from the
-    // rim of the patch the moment the palm peels away, sized by the depth
-    // the palm actually reached; the flush blooms where it pressed
-    const depthRef =
-      this.solver.lattice.spacing * this.solver.hand.maxDepthCells;
-    const point = new THREE.Vector3();
-    this.solver.onRelease = (r) => {
-      const depth01 = Math.min(1, r.depth / depthRef);
-      point.set(r.x, r.y, r.z);
-      this.ripples.spawn(
-        point,
-        depth01,
-        this.killCam.active ? 1.35 : 1,
-        0,
-        r.radius * 0.8,
-      );
-      specimen.flush.print({ ...r, depth01 });
+    // the contact is the physics' to report: the print blooms where the
+    // palm pressed, as deep as it pressed; the sound follows the same facts
+    const depthRef = this.flesh.spacing * this.flesh.hand.maxDepthCells;
+    this.flesh.onRelease = (r) => {
+      specimen.flush.print({ ...r, depth01: Math.min(1, r.depth / depthRef) });
     };
-    this.solver.onContact = (r) =>
+    this.flesh.onContact = (r) =>
       this.audio.contact(
         Math.min(1, r.depth / depthRef),
         r.area,
@@ -141,7 +116,7 @@ export class App {
       const kp = this.killCam.params;
       this.audio.holdBreath();
       this.killCam.trigger(this.rig, point, dir, () => {
-        this.solver.slap(point, dir, tangential, power, radius);
+        this.flesh.slap(point, dir, tangential, power, radius);
         this.audio.impactCinema(
           power01,
           kp.freezeS + kp.crawlS + kp.returnS,
@@ -218,9 +193,8 @@ export class App {
     document.addEventListener("visibilitychange", visibility);
     if (document.hidden) visibility();
     void maybeAttachDevGui(
-      this.solver,
+      this.flesh,
       this.slap,
-      this.ripples,
       this.pipeline,
       this.killCam,
       this.stage.specimen.flush,
@@ -274,28 +248,12 @@ export class App {
     this.stage.scene.environmentIntensity =
       this.baseEnvIntensity * (1 - 0.85 * k);
 
-    if (this.solver.stirred) {
-      this.simSleeping = false;
-      this.solver.stirred = false;
-    }
-    const busy =
-      this.slap.engaged ||
-      this.solver.pressing ||
-      this.ripples.active ||
-      this.killCam.active;
-    if (busy) this.simSleeping = false;
-    if (!this.simSleeping) {
-      const simDt = dt * this.killCam.timeScale;
-      this.solver.step(simDt);
-      this.ripples.update(simDt);
-      this.skin.apply(this.solver, this.ripples);
-      if (!busy && this.solver.settled) {
-        // snap home (<1px away by construction), skin once, go to sleep
-        this.solver.reset();
-        this.skin.apply(this.solver, this.ripples);
-        this.simSleeping = true;
-      }
-    }
+    this.flesh.update(
+      dt,
+      this.killCam.timeScale,
+      this.slap.engaged,
+      this.killCam.active,
+    );
     this.rig.update(dt, this.pointer);
 
     const source = this.killCam.active ? this.killCam.camera : this.rig.camera;

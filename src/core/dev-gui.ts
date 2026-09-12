@@ -1,7 +1,6 @@
 import type { AudioDirector } from "../audio/director";
 import type { SlapInteraction } from "../interaction/slap";
-import type { RippleField } from "../physics/ripples";
-import type { XpbdSolver } from "../physics/solver";
+import type { Flesh } from "../physics/flesh";
 import type { Pipeline } from "../render/pipeline";
 import type { FlushField } from "../scene/flush";
 import type { KillCam } from "../scene/kill-cam";
@@ -11,9 +10,8 @@ import type { KillCam } from "../scene/kill-cam";
  * lil-gui never ships in the plain bundle — the site itself has no UI.
  */
 export async function maybeAttachDevGui(
-  solver: XpbdSolver,
+  flesh: Flesh,
   slap: SlapInteraction,
-  ripples: RippleField,
   pipeline: Pipeline | null,
   killCam: KillCam,
   flush: FlushField,
@@ -22,31 +20,33 @@ export async function maybeAttachDevGui(
   if (!new URLSearchParams(window.location.search).has("dev")) return;
   const { default: GUI } = await import("lil-gui");
   const gui = new GUI({ title: "tuning" });
+  // the physics may live in a worker: every change is pushed across
+  gui.onChange(() => flesh.syncParams());
 
   const s = gui.addFolder("tissue");
-  s.add(solver.params, "substeps", 2, 16, 1);
-  s.add(solver.params, "compliance", 1e-5, 3e-3);
-  s.add(solver.params, "tensionRatio", 0.05, 1);
-  s.add(solver.params, "volumeCompliance", 0, 1e-7);
-  s.add(solver.params, "anchorRate", 5, 150);
-  s.add(solver.params, "shapeMemoryRate", 0, 12);
-  s.add(solver.params, "damping", 0, 6);
-  s.add(solver.params, "viscosity", 0, 150);
-  s.add(solver.params, "maxDisplacement", 0.1, 1.2);
+  s.add(flesh.params, "substeps", 2, 16, 1);
+  s.add(flesh.params, "compliance", 1e-5, 3e-3);
+  s.add(flesh.params, "tensionRatio", 0.05, 1);
+  s.add(flesh.params, "volumeCompliance", 0, 1e-7);
+  s.add(flesh.params, "anchorRate", 5, 150);
+  s.add(flesh.params, "shapeMemoryRate", 0, 12);
+  s.add(flesh.params, "damping", 0, 6);
+  s.add(flesh.params, "viscosity", 0, 150);
+  s.add(flesh.params, "maxDisplacement", 0.1, 1.2);
 
   const c = gui.addFolder("hand");
-  c.add(solver.hand, "handMass", 2, 60);
-  c.add(solver.hand, "arrivalBase", 0, 3);
-  c.add(solver.hand, "arrivalSpeed", 0, 2);
-  c.add(solver.hand, "armAccel", 0, 80);
-  c.add(solver.hand, "driveS", 0.01, 0.15);
-  c.add(solver.hand, "dwellS", 0, 0.25);
-  c.add(solver.hand, "peelSpeed", 0.3, 6);
-  c.add(solver.hand, "friction", 0, 1);
-  c.add(solver.hand, "rim", 0.01, 0.2);
-  c.add(solver.hand, "elongation", 1, 2.5);
-  c.add(solver.hand, "dome", 0, 0.08);
-  c.add(solver.hand, "maxDepthCells", 0.5, 2.5);
+  c.add(flesh.hand, "handMass", 2, 60);
+  c.add(flesh.hand, "arrivalBase", 0, 3);
+  c.add(flesh.hand, "arrivalSpeed", 0, 2);
+  c.add(flesh.hand, "armAccel", 0, 80);
+  c.add(flesh.hand, "driveS", 0.01, 0.15);
+  c.add(flesh.hand, "dwellS", 0, 0.25);
+  c.add(flesh.hand, "peelSpeed", 0.3, 6);
+  c.add(flesh.hand, "friction", 0, 1);
+  c.add(flesh.hand, "rim", 0.01, 0.2);
+  c.add(flesh.hand, "elongation", 1, 2.5);
+  c.add(flesh.hand, "dome", 0, 0.08);
+  c.add(flesh.hand, "maxDepthCells", 0.5, 2.5);
 
   const f = gui.addFolder("flush");
   f.add(flush.params, "gain", 0, 1);
@@ -96,9 +96,9 @@ export async function maybeAttachDevGui(
   k.add(killCam.params, "rakeIntensity", 0, 200);
 
   const r = gui.addFolder("ripples");
-  r.add(ripples.params, "speed", 0.5, 6);
-  r.add(ripples.params, "width", 0.05, 0.5);
-  r.add(ripples.params, "spatialDecay", 0, 3);
-  r.add(ripples.params, "temporalDecay", 0, 6);
-  r.add(ripples.params, "maxAmp", 0, 0.12);
+  r.add(flesh.rippleParams, "speed", 0.5, 6);
+  r.add(flesh.rippleParams, "width", 0.05, 0.5);
+  r.add(flesh.rippleParams, "spatialDecay", 0, 3);
+  r.add(flesh.rippleParams, "temporalDecay", 0, 6);
+  r.add(flesh.rippleParams, "maxAmp", 0, 0.12);
 }

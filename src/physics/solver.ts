@@ -1,11 +1,10 @@
-import type * as THREE from "three/webgpu";
 import {
   type ContactReport,
   defaultHandParams,
   Hand,
   type HandParams,
 } from "./hand";
-import type { Lattice } from "./lattice";
+import type { Lattice, Vec3Like } from "./lattice";
 import { preserveVolume } from "./volume";
 
 /**
@@ -113,7 +112,7 @@ export class XpbdSolver {
     this.maxDisp2 = 0;
   }
 
-  startGrab(point: THREE.Vector3, radius: number): void {
+  startGrab(point: Vec3Like, radius: number): void {
     this.stirred = true;
     this.grabIds.length = 0;
     this.grabW.length = 0;
@@ -144,7 +143,7 @@ export class XpbdSolver {
     this.grabbing = true;
   }
 
-  setGrabOffset(offset: THREE.Vector3): void {
+  setGrabOffset(offset: Vec3Like): void {
     this.stirred = true;
     this.grabOffset.x = offset.x;
     this.grabOffset.y = offset.y;
@@ -169,13 +168,13 @@ export class XpbdSolver {
    * @param radius nominal palm radius, world units
    */
   slap(
-    point: THREE.Vector3,
-    dir: THREE.Vector3,
-    tangential: THREE.Vector3,
+    point: Vec3Like,
+    dir: Vec3Like,
+    tangential: Vec3Like,
     strength: number,
     radius: number,
   ): void {
-    if (dir.lengthSq() < 1e-12) return;
+    if (dir.x * dir.x + dir.y * dir.y + dir.z * dir.z < 1e-12) return;
     this.stirred = true;
     this.hands.push(
       new Hand(
@@ -195,8 +194,8 @@ export class XpbdSolver {
    * dragged wherever the next call says. Flesh under it follows through
    * friction; the sim wakes and stays awake while it is down.
    */
-  touch(point: THREE.Vector3, dir: THREE.Vector3): void {
-    if (dir.lengthSq() < 1e-12) return;
+  touch(point: Vec3Like, dir: Vec3Like): void {
+    if (dir.x * dir.x + dir.y * dir.y + dir.z * dir.z < 1e-12) return;
     this.stirred = true;
     if (!this.finger || this.finger.done || !this.finger.isFinger) {
       this.finger = new Hand(
@@ -383,8 +382,8 @@ export class XpbdSolver {
    * @param strength peak velocity change, world units/s
    */
   impulse(
-    point: THREE.Vector3,
-    dir: THREE.Vector3,
+    point: Vec3Like,
+    dir: Vec3Like,
     strength: number,
     radius: number,
   ): void {

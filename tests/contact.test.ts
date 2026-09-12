@@ -2,17 +2,14 @@ import { describe, expect, test } from "bun:test";
 import * as THREE from "three/webgpu";
 import { buildLattice } from "../src/physics/lattice";
 import { XpbdSolver } from "../src/physics/solver";
-import { bodySdf } from "../src/scene/specimen";
+import { bodySdf } from "../src/scene/body-sdf";
 
 /** the production lattice: same bounds and spacing as the app */
 function body() {
   return buildLattice(
-    (p) => bodySdf(p.x, p.y, p.z) < 0,
-    (p) => Math.min(1, Math.max(0, -bodySdf(p.x, p.y, p.z) / 0.5)),
-    new THREE.Box3(
-      new THREE.Vector3(-1.25, -1.75, -1.1),
-      new THREE.Vector3(1.25, 1.5, 1.1),
-    ),
+    (x, y, z) => bodySdf(x, y, z) < 0,
+    (x, y, z) => Math.min(1, Math.max(0, -bodySdf(x, y, z) / 0.5)),
+    { min: { x: -1.25, y: -1.75, z: -1.1 }, max: { x: 1.25, y: 1.5, z: 1.1 } },
     0.17,
   );
 }
