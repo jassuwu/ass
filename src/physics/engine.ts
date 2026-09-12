@@ -185,6 +185,7 @@ export class FleshEngine {
         this.ripples,
         outPos,
         outNormal,
+        s.palms(),
       );
       changed = true;
       if (!busy && s.settled) {

@@ -1,4 +1,5 @@
 import {
+  attribute,
   cameraPosition,
   color,
   float,
@@ -68,19 +69,29 @@ function createSkinMaterial(flush: FlushField): THREE.MeshPhysicalNodeMaterial {
   const scanSss = load("skin_0001_subsurface_4k.jpg");
 
   // ~0.6 world units (~8cm) per tile matches the scan's real-world scale;
-  // a second octave at ~3.5x adds the micro grain a single tile can't hold
+  // a second octave at ~3.5x adds the micro grain a single tile can't hold.
+  // Projected and blended in REST space — immutable copies of each vertex's
+  // undeformed position and normal — so the pores stay glued to the skin
+  // when it moves instead of sliding through a world-space projection, and
+  // the blend never flips axes inside a dent.
   const uvScale = 1.6;
   const uvScale2 = 5.6;
-  const w = normalWorld.abs().pow(4);
+  const skinP = vec3(
+    attribute("skinPosition", "vec3") as unknown as THREE.Node<"vec3">,
+  );
+  const skinN = vec3(
+    attribute("skinNormal", "vec3") as unknown as THREE.Node<"vec3">,
+  ).normalize();
+  const w = skinN.abs().pow(4);
   const wSum = w.x.add(w.y).add(w.z);
   const wx = w.x.div(wSum);
   const wy = w.y.div(wSum);
   const wz = w.z.div(wSum);
   const tp = (map: THREE.Texture, scale: number) =>
-    texture(map, positionWorld.zy.mul(scale))
+    texture(map, skinP.zy.mul(scale))
       .mul(wx)
-      .add(texture(map, positionWorld.xz.mul(scale)).mul(wy))
-      .add(texture(map, positionWorld.xy.mul(scale)).mul(wz));
+      .add(texture(map, skinP.xz.mul(scale)).mul(wy))
+      .add(texture(map, skinP.xy.mul(scale)).mul(wz));
 
   // albedo: authored tonal gradients carry the HUE; the scan contributes
   // LUMINANCE detail only. Multiplying skin color by skin color squares the
@@ -89,10 +100,8 @@ function createSkinMaterial(flush: FlushField): THREE.MeshPhysicalNodeMaterial {
   const base = color(0xb27c5c);
   const flushed = color(0x9d6749);
   const pale = color(0xc59579);
-  const broad = mx_fractal_noise_float(positionWorld.mul(1.4))
-    .mul(0.5)
-    .add(0.5);
-  const fine = mx_fractal_noise_float(positionWorld.mul(6.5)).mul(0.5).add(0.5);
+  const broad = mx_fractal_noise_float(skinP.mul(1.4)).mul(0.5).add(0.5);
+  const fine = mx_fractal_noise_float(skinP.mul(6.5)).mul(0.5).add(0.5);
   const tint = mix(mix(base, pale, broad.mul(0.35)), flushed, fine.mul(0.22));
   // spank flush: blood rising under repeated impacts, mottled by the fine
   // noise — real irritation is blotchy, never an even airbrush. The
@@ -114,9 +123,9 @@ function createSkinMaterial(flush: FlushField): THREE.MeshPhysicalNodeMaterial {
   // scanned normals, UDN triplanar blend, two octaves
   const decode = (t: ReturnType<typeof texture>) => t.xy.mul(2).sub(1);
   const octave = (scale: number, strength: number) => {
-    const nX = decode(texture(scanNormal, positionWorld.zy.mul(scale)));
-    const nY = decode(texture(scanNormal, positionWorld.xz.mul(scale)));
-    const nZ = decode(texture(scanNormal, positionWorld.xy.mul(scale)));
+    const nX = decode(texture(scanNormal, skinP.zy.mul(scale)));
+    const nY = decode(texture(scanNormal, skinP.xz.mul(scale)));
+    const nZ = decode(texture(scanNormal, skinP.xy.mul(scale)));
     return vec3(float(0), nX.y, nX.x)
       .mul(wx)
       .add(vec3(nY.x, float(0), nY.y).mul(wy))
@@ -156,6 +165,9 @@ export function createPlaceholderSpecimen(): Specimen {
   // the exact SDF-gradient normals alias into a zipper along the crease;
   // smooth mesh normals from the first frame, as after any deformation
   geometry.computeVertexNormals();
+  // the skin's own coordinates: what the material projects its maps in
+  geometry.setAttribute("skinPosition", geometry.attributes.position.clone());
+  geometry.setAttribute("skinNormal", geometry.attributes.normal.clone());
   const flush = new FlushField(geometry);
   const mesh = new THREE.Mesh(geometry, createSkinMaterial(flush));
   mesh.castShadow = true;

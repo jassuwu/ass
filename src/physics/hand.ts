@@ -40,6 +40,7 @@ export interface HandParams {
   fingerRadius: number;
   fingerDepth: number;
   fingerRate: number;
+  fingerRim: number;
 }
 
 export const defaultHandParams: HandParams = {
@@ -55,10 +56,91 @@ export const defaultHandParams: HandParams = {
   elongation: 1.5,
   dome: 0.03,
   maxDepthCells: 1.3,
-  fingerRadius: 0.13,
-  fingerDepth: 0.03,
+  fingerRadius: 0.14,
+  fingerDepth: 0.035,
   fingerRate: 40,
+  fingerRim: 0.045,
 };
+
+/**
+ * The exact shape of a palm's front face at one instant: centre, blow
+ * direction, finger and across axes with their semi-axes, rim rounding
+ * and dome. The lattice collides with a softened version of it; the skin
+ * is pushed out of the exact one at mesh resolution.
+ */
+export interface PalmFrame {
+  cx: number;
+  cy: number;
+  cz: number;
+  nx: number;
+  ny: number;
+  nz: number;
+  ax: number;
+  ay: number;
+  az: number;
+  bx: number;
+  by: number;
+  bz: number;
+  ra: number;
+  rb: number;
+  rim: number;
+  dome: number;
+}
+
+export interface PalmHit {
+  /** signed distance to the palm solid; negative = inside */
+  sd: number;
+  gx: number;
+  gy: number;
+  gz: number;
+  /** ellipse-normalised lateral distance and axial coordinate */
+  en: number;
+  a: number;
+}
+
+/**
+ * Signed distance from a point to the palm solid, with its gradient.
+ * Returns false when the point is clearly ahead of the face.
+ */
+export function palmDistance(
+  f: PalmFrame,
+  px: number,
+  py: number,
+  pz: number,
+  out: PalmHit,
+): boolean {
+  const dx = px - f.cx;
+  const dy = py - f.cy;
+  const dz = pz - f.cz;
+  const la = dx * f.ax + dy * f.ay + dz * f.az;
+  const lb = dx * f.bx + dy * f.by + dz * f.bz;
+  const en = Math.hypot(la / f.ra, lb / f.rb);
+  // the fleshy centre of the palm leads its edge: a shallow dome
+  const a = dx * f.nx + dy * f.ny + dz * f.nz + f.dome * Math.min(en * en, 1);
+  out.en = en;
+  out.a = a;
+  if (a > f.rim) return false;
+  const rr = (en - 1) * (en > 1e-6 ? Math.hypot(la, lb) / en : f.ra);
+  if (rr <= 0) {
+    out.sd = a;
+    out.gx = f.nx;
+    out.gy = f.ny;
+    out.gz = f.nz;
+    return true;
+  }
+  const aa = Math.max(a + f.rim, 0);
+  const q = Math.hypot(rr, aa);
+  if (q < 1e-9) return false;
+  out.sd = q - f.rim;
+  const ll = Math.hypot(la, lb) || 1;
+  const lx = (f.ax * la + f.bx * lb) / ll;
+  const ly = (f.ay * la + f.by * lb) / ll;
+  const lz = (f.az * la + f.bz * lb) / ll;
+  out.gx = (lx * rr + f.nx * aa) / q;
+  out.gy = (ly * rr + f.ny * aa) / q;
+  out.gz = (lz * rr + f.nz * aa) / q;
+  return true;
+}
 
 export interface ContactReport {
   /** depth the front of the palm reached, world units */
@@ -151,6 +233,25 @@ export class Hand {
   private reported = false;
   private released = false;
   readonly isFinger: boolean;
+  private readonly latticeFrame: PalmFrame = {
+    cx: 0,
+    cy: 0,
+    cz: 0,
+    nx: 0,
+    ny: 0,
+    nz: 1,
+    ax: 0,
+    ay: 1,
+    az: 0,
+    bx: 1,
+    by: 0,
+    bz: 0,
+    ra: 1,
+    rb: 1,
+    rim: 0,
+    dome: 0,
+  };
+  private readonly hit: PalmHit = { sd: 0, gx: 0, gy: 0, gz: 0, en: 0, a: 0 };
 
   constructor(
     lattice: Lattice,
@@ -177,9 +278,11 @@ export class Hand {
     this.arrival = params.arrivalBase + params.arrivalSpeed * strength;
     this.v = this.arrival;
     if (this.isFinger) {
-      // already resting on the skin, pressing lightly, never reporting
+      // resting on the skin, never reporting. The lattice is too coarse to
+      // dent under a fingertip: it only carries the drag, and the skin
+      // takes the dimple itself at mesh resolution (see frame()).
       this.phase = "slide";
-      this.depth = params.fingerDepth;
+      this.depth = 0;
       this.v = 0;
       this.reported = true;
       this.released = true;
@@ -375,7 +478,7 @@ export class Hand {
     } else if (this.phase === "peel") {
       // the hand rebounds off the flesh faster than the flesh can follow
       this.depth -= Math.max(p.peelSpeed, this.arrival * 2.5) * h;
-      if (this.depth < -p.rim - 0.02) {
+      if (this.depth < -Math.max(p.rim, p.fingerRim + p.fingerDepth) - 0.02) {
         this.phase = "done";
         return;
       }
@@ -395,67 +498,68 @@ export class Hand {
       this.tz *= tDecay;
     }
 
-    // front-face centre
-    const cx = this.ox + this.nx * this.depth + this.sx;
-    const cy = this.oy + this.ny * this.depth + this.sy;
-    const cz = this.oz + this.nz * this.depth + this.sz;
-    const rim = p.rim;
+    // the face the lattice sees: rounded off to the cell size, so its
+    // coarse dent is smooth at the scale the lattice can express
+    const f = this.latticeFrame;
+    f.cx = this.ox + this.nx * this.depth + this.sx;
+    f.cy = this.oy + this.ny * this.depth + this.sy;
+    f.cz = this.oz + this.nz * this.depth + this.sz;
+    f.nx = this.nx;
+    f.ny = this.ny;
+    f.nz = this.nz;
+    f.ax = this.ax;
+    f.ay = this.ay;
+    f.az = this.az;
+    f.bx = this.bx;
+    f.by = this.by;
+    f.bz = this.bz;
+    f.ra = this.ra;
+    f.rb = this.rb;
+    f.rim = Math.max(p.rim, this.cellSize * 0.9);
+    f.dome = this.isFinger ? 0 : p.dome;
+    const hit = this.hit;
+    const handVx = this.tx * slide + this.nx * this.v;
+    const handVy = this.ty * slide + this.ny * this.v;
+    const handVz = this.tz * slide + this.nz * this.v;
+
+    if (this.isFinger) {
+      // a fingertip cannot dent the lattice; it drags it. Sticky friction
+      // weighted over a soft footprint wider than the pad, so several
+      // particles move together instead of one cell at a time.
+      for (let k = 0; k < this.ids.length; k++) {
+        const i3 = this.ids[k] * 3;
+        const dx = pos[i3] - f.cx;
+        const dy = pos[i3 + 1] - f.cy;
+        const dz = pos[i3 + 2] - f.cz;
+        const a = dx * this.nx + dy * this.ny + dz * this.nz;
+        if (a < -this.cellSize || a > this.cellSize * 1.5) continue;
+        const la = dx * this.ax + dy * this.ay + dz * this.az;
+        const lb = dx * this.bx + dy * this.by + dz * this.bz;
+        const en = Math.hypot(la, lb) / (this.ra * 2.2);
+        if (en > 1.6) continue;
+        const w = Math.exp(-en * en * 2) * p.friction;
+        this.drag(pos, prev, i3, handVx, handVy, handVz, h, w);
+      }
+      return;
+    }
+
     // momentum bookkeeping for the reaction: the flesh the palm is touching
     // and how fast it was already moving along the blow
     let count = 0;
     let footprint = 0;
     let fleshMomentum = 0;
     const invH = 1 / h;
-    const handVx = this.tx * slide + this.nx * this.v;
-    const handVy = this.ty * slide + this.ny * this.v;
-    const handVz = this.tz * slide + this.nz * this.v;
 
     for (let k = 0; k < this.ids.length; k++) {
       const i3 = this.ids[k] * 3;
-      const dx = pos[i3] - cx;
-      const dy = pos[i3 + 1] - cy;
-      const dz = pos[i3 + 2] - cz;
-      const la = dx * this.ax + dy * this.ay + dz * this.az;
-      const lb = dx * this.bx + dy * this.by + dz * this.bz;
-      // ellipse-normalised lateral distance, then back to world units
-      const en = Math.hypot(la / this.ra, lb / this.rb);
-      // the fleshy centre of the palm leads its edge: a shallow dome
-      const a =
-        dx * this.nx +
-        dy * this.ny +
-        dz * this.nz +
-        p.dome * Math.min(en * en, 1);
-      if (a > rim) continue;
+      if (!palmDistance(f, pos[i3], pos[i3 + 1], pos[i3 + 2], hit)) continue;
       // footprint: skin under the face, within one cell of it (the ring
       // outside the body counts here — it is where the surface lives)
-      if (en < 1 && a > -this.cellSize && a < this.cellSize) footprint++;
-      const rr = (en - 1) * (en > 1e-6 ? Math.hypot(la, lb) / en : this.ra);
-      let sd: number;
-      let gx: number;
-      let gy: number;
-      let gz: number;
-      if (rr <= 0) {
-        sd = a;
-        gx = this.nx;
-        gy = this.ny;
-        gz = this.nz;
-      } else {
-        const aa = Math.max(a + rim, 0);
-        const q = Math.hypot(rr, aa);
-        if (q < 1e-9) continue;
-        sd = q - rim;
-        // lateral direction in world space
-        const ll = Math.hypot(la, lb) || 1;
-        const lx = (this.ax * la + this.bx * lb) / ll;
-        const ly = (this.ay * la + this.by * lb) / ll;
-        const lz = (this.az * la + this.bz * lb) / ll;
-        gx = (lx * rr + this.nx * aa) / q;
-        gy = (ly * rr + this.ny * aa) / q;
-        gz = (lz * rr + this.nz * aa) / q;
-      }
+      if (hit.en < 1 && hit.a > -this.cellSize && hit.a < this.cellSize)
+        footprint++;
       // flesh riding along with the palm sits a hair ahead of the face:
       // still in contact, still counted, just not pushed
-      if (sd >= CONTACT_TOLERANCE) continue;
+      if (hit.sd >= CONTACT_TOLERANCE) continue;
       if (this.massive[k]) {
         fleshMomentum +=
           ((pos[i3] - prev[i3]) * this.nx +
@@ -464,29 +568,15 @@ export class Hand {
           invH;
         count++;
       }
-      if (sd >= 0) continue;
-      // push out of the palm
-      pos[i3] -= sd * gx;
-      pos[i3 + 1] -= sd * gy;
-      pos[i3 + 2] -= sd * gz;
+      if (hit.sd < 0) {
+        // push out of the palm
+        pos[i3] -= hit.sd * hit.gx;
+        pos[i3 + 1] -= hit.sd * hit.gy;
+        pos[i3 + 2] -= hit.sd * hit.gz;
+      }
       // sticky friction: the tangential motion of contacted flesh follows
       // the palm's — drag it along with the swipe, hold it during the dwell
-      const mvx = pos[i3] - prev[i3];
-      const mvy = pos[i3 + 1] - prev[i3 + 1];
-      const mvz = pos[i3 + 2] - prev[i3 + 2];
-      const wantX = handVx * h;
-      const wantY = handVy * h;
-      const wantZ = handVz * h;
-      let sxv = wantX - mvx;
-      let syv = wantY - mvy;
-      let szv = wantZ - mvz;
-      const sn = sxv * gx + syv * gy + szv * gz;
-      sxv -= gx * sn;
-      syv -= gy * sn;
-      szv -= gz * sn;
-      pos[i3] += sxv * p.friction;
-      pos[i3 + 1] += syv * p.friction;
-      pos[i3 + 2] += szv * p.friction;
+      this.drag(pos, prev, i3, handVx, handVy, handVz, h, p.friction, hit);
     }
 
     if (this.phase === "drive") {
@@ -505,5 +595,64 @@ export class Hand {
       }
       if (footprint > this.peakCount) this.peakCount = footprint;
     }
+  }
+
+  /** bring a particle's tangential motion toward the hand's, by weight */
+  private drag(
+    pos: Float32Array,
+    prev: Float32Array,
+    i3: number,
+    vx: number,
+    vy: number,
+    vz: number,
+    h: number,
+    weight: number,
+    hit?: PalmHit,
+  ): void {
+    let sx = vx * h - (pos[i3] - prev[i3]);
+    let sy = vy * h - (pos[i3 + 1] - prev[i3 + 1]);
+    let sz = vz * h - (pos[i3 + 2] - prev[i3 + 2]);
+    const gx = hit ? hit.gx : this.nx;
+    const gy = hit ? hit.gy : this.ny;
+    const gz = hit ? hit.gz : this.nz;
+    const sn = sx * gx + sy * gy + sz * gz;
+    sx -= gx * sn;
+    sy -= gy * sn;
+    sz -= gz * sn;
+    pos[i3] += sx * weight;
+    pos[i3 + 1] += sy * weight;
+    pos[i3 + 2] += sz * weight;
+  }
+
+  /**
+   * the exact palm for the skin to conform to, or null once it has left.
+   * A fingertip's visible press is entirely here — the lattice never saw it.
+   */
+  frame(): PalmFrame | null {
+    if (this.phase === "done") return null;
+    const p = this.params;
+    const depth = this.isFinger ? p.fingerDepth + this.depth : this.depth;
+    const rim = this.isFinger ? p.fingerRim : p.rim;
+    if (depth < -rim) return null;
+    return {
+      cx: this.ox + this.nx * depth + this.sx,
+      cy: this.oy + this.ny * depth + this.sy,
+      cz: this.oz + this.nz * depth + this.sz,
+      nx: this.nx,
+      ny: this.ny,
+      nz: this.nz,
+      ax: this.ax,
+      ay: this.ay,
+      az: this.az,
+      bx: this.bx,
+      by: this.by,
+      bz: this.bz,
+      ra: this.ra,
+      rb: this.rb,
+      rim,
+      // a fingertip's face is a bowl as deep as its press: it meets the
+      // surface at its own edge instead of cutting a disc into it
+      dome: this.isFinger ? p.fingerDepth : p.dome,
+    };
   }
 }

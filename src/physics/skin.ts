@@ -1,3 +1,4 @@
+import type { PalmFrame } from "./hand";
 import type { Lattice } from "./lattice";
 import type { RippleField } from "./ripples";
 
@@ -9,6 +10,9 @@ import type { RippleField } from "./ripples";
  *
  * Pure arrays in, pure arrays out — this runs wherever the solver runs.
  */
+/** how far beyond the palm's edge the skin still slopes into the print */
+const FEATHER_OUT = 0.11;
+
 export class MeshSkin {
   private readonly vertCount: number;
   private readonly base: Float32Array;
@@ -101,13 +105,19 @@ export class MeshSkin {
     }
   }
 
-  /** deformed positions and normals for the current particle positions */
+  /**
+   * deformed positions and normals for the current particle positions.
+   * `palms` are the hands in the flesh right now: the lattice carries their
+   * bulk, and here the skin is pushed out of the palm's exact shape at
+   * mesh resolution, so the print is a hand and not a stack of cells.
+   */
   apply(
     pos: Float32Array,
     rest: Float32Array,
     ripples: RippleField | null,
     outPos: Float32Array,
     outNormal: Float32Array,
+    palms: PalmFrame[] = [],
   ): void {
     const rippling = ripples?.active === true;
     for (let v = 0; v < this.vertCount; v++) {
@@ -140,7 +150,53 @@ export class MeshSkin {
       outPos[v * 3 + 1] = by + dy;
       outPos[v * 3 + 2] = bz + dz;
     }
+    for (const palm of palms) this.refine(palm, outPos);
     this.computeNormals(outPos, outNormal);
+  }
+
+  /**
+   * Conform the skin to the palm at mesh resolution. Vertices under the
+   * face are lifted to it along the blow axis only — never sideways, so
+   * nothing piles up on the palm's side into a wall — and the lift is
+   * feathered over a band around the edge, so the surface slopes into the
+   * print the way skin under tension does instead of stepping.
+   */
+  private refine(palm: PalmFrame, outPos: Float32Array): void {
+    const reach = Math.max(palm.ra, palm.rb) + FEATHER_OUT + 0.15;
+    const reach2 = reach * reach;
+    // feather widths in ellipse-normalised units
+    const inner = 1 - palm.rim / Math.min(palm.ra, palm.rb);
+    const outer = 1 + FEATHER_OUT / Math.min(palm.ra, palm.rb);
+    for (let v = 0; v < this.vertCount; v++) {
+      const i = v * 3;
+      let dx = this.base[i] - palm.cx;
+      let dy = this.base[i + 1] - palm.cy;
+      let dz = this.base[i + 2] - palm.cz;
+      if (dx * dx + dy * dy + dz * dz > reach2) continue;
+      dx = outPos[i] - palm.cx;
+      dy = outPos[i + 1] - palm.cy;
+      dz = outPos[i + 2] - palm.cz;
+      const la = dx * palm.ax + dy * palm.ay + dz * palm.az;
+      const lb = dx * palm.bx + dy * palm.by + dz * palm.bz;
+      const en = Math.hypot(la / palm.ra, lb / palm.rb);
+      if (en >= outer) continue;
+      // the face, domed: deeper at the centre than the edge
+      const a =
+        dx * palm.nx +
+        dy * palm.ny +
+        dz * palm.nz +
+        palm.dome * Math.min(en * en, 1);
+      if (a >= 0) continue;
+      let w = 1;
+      if (en > inner) {
+        const t = (en - inner) / (outer - inner);
+        w = 1 - t * t * (3 - 2 * t);
+      }
+      const lift = -a * w;
+      outPos[i] += palm.nx * lift;
+      outPos[i + 1] += palm.ny * lift;
+      outPos[i + 2] += palm.nz * lift;
+    }
   }
 
   /** the rest pose straight through: positions and the authored normals */

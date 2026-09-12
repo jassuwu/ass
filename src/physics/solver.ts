@@ -3,6 +3,7 @@ import {
   defaultHandParams,
   Hand,
   type HandParams,
+  type PalmFrame,
 } from "./hand";
 import type { Lattice, Vec3Like } from "./lattice";
 import { preserveVolume } from "./volume";
@@ -159,6 +160,16 @@ export class XpbdSolver {
   /** true while a hand is still in the flesh */
   get pressing(): boolean {
     return this.hands.length > 0;
+  }
+
+  /** the exact shape of every hand touching the flesh right now */
+  palms(): PalmFrame[] {
+    const out: PalmFrame[] = [];
+    for (const hand of this.hands) {
+      const frame = hand.frame();
+      if (frame) out.push(frame);
+    }
+    return out;
   }
 
   /**

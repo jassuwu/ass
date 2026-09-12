@@ -95,9 +95,15 @@ commits with --no-verify, no co-author lines. Segmented conventional commits.
   out-of-frame flesh rides the anchored boundary via clamped skin bindings.
 - Everything under `src/physics/` and `src/scene/body-sdf.ts` must stay free
   of three.js imports (types only): it is bundled into the worker.
-- Verify headlessly with Playwright (`@playwright/test` in node_modules,
-  `chromium` channel, `--enable-unsafe-webgpu`); a screenshot takes ~200 ms
-  so judge contact dynamics with `bun run test` traces, not stills.
+- Verify motion with `node scripts/screencast.mjs` against the dev server:
+  it records every gesture at ~60 fps through Chrome's screencast and
+  builds contact sheets under `/tmp/ass-vid/`. A screenshot takes ~200 ms
+  and cannot resolve a 60 ms contact; `bun run test` traces the numbers.
+- The skin conforms to the palm at mesh resolution (`skin.ts` refine):
+  the lattice carries volume and wobble, the exact print shape is applied
+  to vertices along the blow axis with a feathered edge. Skin maps are
+  projected in rest space (`skinPosition`/`skinNormal` attributes) so they
+  never swim or re-blend under deformation.
 
 ## Roadmap state (July 2026)
 
