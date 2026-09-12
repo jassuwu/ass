@@ -85,12 +85,14 @@ export class SlapInteraction {
         point: THREE.Vector3,
         dir: THREE.Vector3,
         radius: number,
+        swipe01: number,
       ) => void)
     | null = null;
   /**
    * asked before a release is applied. Returning true claims the impact:
    * no impulse is applied and no onImpact fires — the interceptor owns
    * delivery (the kill cam uses this to land the hit on camera, later).
+   * `tangential` is the palm's sideways velocity at contact, world u/s.
    */
   onIntercept:
     | ((
@@ -99,8 +101,13 @@ export class SlapInteraction {
         dir: THREE.Vector3,
         power: number,
         radius: number,
+        tangential: THREE.Vector3,
       ) => boolean)
     | null = null;
+  /** smoothed brush speed over the skin, world u/s — for the friction sound */
+  brushSpeed = 0;
+  /** a grabbed handful let go at speed; power01 in 0..1 */
+  onFling: ((power01: number) => void) | null = null;
 
   private readonly camera: THREE.Camera;
   private readonly proxy: THREE.Mesh;
@@ -163,6 +170,12 @@ export class SlapInteraction {
             (performance.now() - this.holdStart) / this.params.chargeTimeMs,
           )
         : 0;
+    // a stopped cursor emits no events: let the brush speed fall off itself
+    const now = performance.now();
+    if (!this.lastBrush || now - this.lastBrush.time > 70) {
+      this.brushSpeed *= 0.8;
+      if (this.brushSpeed < 1e-3) this.brushSpeed = 0;
+    }
   }
 
   private setRay(clientX: number, clientY: number): void {
@@ -225,12 +238,9 @@ export class SlapInteraction {
       const speed = this.handVel.length();
       if (speed > 0.25 && performance.now() - this.lastGrabT < 90) {
         this.tmpA.copy(this.grabOrigin).add(this.grabOffset);
-        this.solver.impulse(
-          this.tmpA,
-          this.handVel,
-          Math.min(p.flingMax, speed * p.flingGain),
-          p.grabRadius,
-        );
+        const strength = Math.min(p.flingMax, speed * p.flingGain);
+        this.solver.impulse(this.tmpA, this.handVel, strength, p.grabRadius);
+        this.onFling?.(strength / p.flingMax);
       }
       this.handVel.set(0, 0, 0);
       return;
@@ -252,10 +262,12 @@ export class SlapInteraction {
     const point = hit.point.clone();
     const dir = this.raycaster.ray.direction.clone();
 
-    // follow-through: tilt the impulse toward where the cursor is headed
+    // follow-through: tilt the blow toward where the cursor is headed, and
+    // carry the swipe into the palm as real sideways velocity
     const { vx, vy, speed } = this.swipe();
     const swipe01 = Math.min(1, speed / p.swipeRefSpeed);
     let power = p.tapPower + curve * p.chargeBonus;
+    const tangential = new THREE.Vector3();
     if (swipe01 > 0.02) {
       power *= 1 + p.swipePowerBonus * swipe01;
       // world direction of the swipe: re-cast a few px ahead along the
@@ -267,16 +279,20 @@ export class SlapInteraction {
         .addScaledVector(this.raycaster.ray.direction, hit.distance)
         .sub(point);
       if (this.tmpA.lengthSq() > 1e-12) {
+        // world speed of the cursor on the hit plane: the re-cast moved
+        // 24px, so scale by the swipe's px/s over that
+        tangential.copy(this.tmpA).multiplyScalar(speed / 24);
         dir
           .addScaledVector(this.tmpA.normalize(), p.swipeInfluence * swipe01)
           .normalize();
       }
     }
     const power01 = Math.min(1, power / (p.tapPower + p.chargeBonus));
-    if (this.onIntercept?.(power01, point, dir, power, radius)) return;
-    // not a kick — a landed hand: dent, splash, then the lattice recovers
-    this.solver.spank(point, dir, power, radius);
-    this.onImpact?.(power01, point, dir, radius);
+    if (this.onIntercept?.(power01, point, dir, power, radius, tangential))
+      return;
+    // a landed hand: the palm arrives and the flesh answers
+    this.solver.slap(point, dir, tangential, power, radius);
+    this.onImpact?.(power01, point, dir, radius, swipe01);
   }
 
   private onMove(e: PointerEvent): void {
@@ -342,6 +358,7 @@ export class SlapInteraction {
       const dist = delta.length();
       if (dist > 1e-3 && dtS > 0) {
         const speed = dist / dtS;
+        this.brushSpeed += (speed - this.brushSpeed) * 0.4;
         const strength = Math.min(this.params.brushPower * speed, 0.45);
         this.solver.impulse(
           hit.point,
