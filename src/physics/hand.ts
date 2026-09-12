@@ -73,6 +73,15 @@ export interface ContactReport {
   nz: number;
   /** the palm's nominal radius */
   radius: number;
+  /** palm frame: unit finger axis, unit across axis, and the semi-axes */
+  ax: number;
+  ay: number;
+  az: number;
+  bx: number;
+  by: number;
+  bz: number;
+  ra: number;
+  rb: number;
 }
 
 type Phase = "drive" | "dwell" | "peel" | "done";
@@ -243,6 +252,14 @@ export class Hand {
       ny: this.ny,
       nz: this.nz,
       radius: this.radius,
+      ax: this.ax,
+      ay: this.ay,
+      az: this.az,
+      bx: this.bx,
+      by: this.by,
+      bz: this.bz,
+      ra: this.ra,
+      rb: this.rb,
     };
   }
 
