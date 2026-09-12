@@ -79,6 +79,8 @@ export class XpbdSolver {
 
   /** hands currently in the flesh */
   private hands: Hand[] = [];
+  /** the fingertip drawn over the skin, while there is one */
+  private finger: Hand | null = null;
   private reports = new Map<Hand, ContactReport>();
 
   constructor(
@@ -105,6 +107,7 @@ export class XpbdSolver {
     this.prev.set(this.lattice.rest);
     this.vel.fill(0);
     this.hands.length = 0;
+    this.finger = null;
     this.reports.clear();
     this.maxSpeed2 = 0;
     this.maxDisp2 = 0;
@@ -185,6 +188,35 @@ export class XpbdSolver {
         radius,
       ),
     );
+  }
+
+  /**
+   * A fingertip resting on the skin at `point`, pressing along `dir`,
+   * dragged wherever the next call says. Flesh under it follows through
+   * friction; the sim wakes and stays awake while it is down.
+   */
+  touch(point: THREE.Vector3, dir: THREE.Vector3): void {
+    if (dir.lengthSq() < 1e-12) return;
+    this.stirred = true;
+    if (!this.finger || this.finger.done || !this.finger.isFinger) {
+      this.finger = new Hand(
+        this.lattice,
+        this.hand,
+        point,
+        dir,
+        { x: 0, y: 0, z: 0 },
+        0,
+        this.hand.fingerRadius,
+      );
+      this.hands.push(this.finger);
+    }
+    this.finger.moveTo(point, dir);
+  }
+
+  /** the fingertip lifts off; the flesh it was holding springs back */
+  lift(): void {
+    this.finger?.lift();
+    this.finger = null;
   }
 
   step(dt: number): void {

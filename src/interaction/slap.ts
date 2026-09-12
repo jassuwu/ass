@@ -189,11 +189,16 @@ export class SlapInteraction {
             (performance.now() - this.holdStart) / this.params.chargeTimeMs,
           )
         : 0;
-    // a stopped cursor emits no events: let the brush speed fall off itself
+    // a stopped cursor emits no events: let the brush speed fall off, and
+    // after a beat the fingertip lifts
     const now = performance.now();
     if (!this.lastBrush || now - this.lastBrush.time > 70) {
       this.brushSpeed *= 0.8;
       if (this.brushSpeed < 1e-3) this.brushSpeed = 0;
+    }
+    if (this.lastBrush && now - this.lastBrush.time > 160) {
+      this.solver.lift();
+      this.lastBrush = null;
     }
   }
 
@@ -246,6 +251,9 @@ export class SlapInteraction {
       return;
     const hit = this.cast(e.clientX, e.clientY);
     if (!hit) return;
+    // the palm takes over from the fingertip
+    this.solver.lift();
+    this.lastBrush = null;
     this.mode = "pending";
     this.pointerId = e.pointerId;
     this.trail.length = 0;
@@ -393,30 +401,23 @@ export class SlapInteraction {
     }
     if (this.mode !== "idle" || !this.enabled || this.blocked?.()) return;
 
-    // brush
+    // brush: a fingertip drawn over the skin, pressing in along the
+    // surface normal, dragging the flesh with it through friction
     const now = performance.now();
-    if (this.lastBrush && now - this.lastBrush.time < 16) return;
+    if (this.lastBrush && now - this.lastBrush.time < 8) return;
     const hit = this.cast(e.clientX, e.clientY);
-    if (!hit) {
+    if (!hit || !hit.face) {
+      if (this.lastBrush) this.solver.lift();
       this.lastBrush = null;
       return;
     }
     if (this.lastBrush) {
       const dtS = (now - this.lastBrush.time) / 1000;
-      const delta = hit.point.clone().sub(this.lastBrush.point);
-      const dist = delta.length();
-      if (dist > 1e-3 && dtS > 0) {
-        const speed = dist / dtS;
-        this.brushSpeed += (speed - this.brushSpeed) * 0.4;
-        const strength = Math.min(this.params.brushPower * speed, 0.45);
-        this.solver.impulse(
-          hit.point,
-          delta,
-          strength,
-          this.params.brushRadius,
-        );
-      }
+      const dist = hit.point.distanceTo(this.lastBrush.point);
+      if (dtS > 0) this.brushSpeed += (dist / dtS - this.brushSpeed) * 0.4;
     }
+    this.tmpB.copy(hit.face.normal).negate();
+    this.solver.touch(hit.point, this.tmpB);
     this.lastBrush = { point: hit.point.clone(), time: now };
   }
 }

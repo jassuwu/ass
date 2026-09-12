@@ -131,6 +131,35 @@ const sacrum = surface(0.0, 0.55);
 const TAP = 0.7;
 const FULL = 3.9;
 
+describe("fingertip", () => {
+  test("a fingertip drawn across the cheek drags it, then lets go", () => {
+    const solver = new XpbdSolver(body());
+    const { rest } = solver.lattice;
+    const dir = new THREE.Vector3(0, 0, -1);
+    let dragged = 0;
+    for (let s = 0; s < 30; s++) {
+      // 0.5 units across the cheek in half a second
+      const at = surface(0.3 + s * (0.5 / 30), -0.15);
+      solver.touch(at, dir);
+      solver.step(1 / 60);
+      // how far flesh under the finger has travelled sideways with it
+      for (let i = 0; i < solver.pos.length; i += 3) {
+        const lx = rest[i] - at.x;
+        const ly = rest[i + 1] - at.y;
+        if (lx * lx + ly * ly > 0.04 || rest[i + 2] < at.z - 0.2) continue;
+        dragged = Math.max(dragged, solver.pos[i] - rest[i]);
+      }
+    }
+    expect(dragged).toBeGreaterThan(0.01);
+    expect(solver.pressing).toBe(true);
+    solver.lift();
+    for (let s = 0; s < 60; s++) solver.step(1 / 60);
+    expect(solver.pos.every(Number.isFinite)).toBe(true);
+    expect(solver.pressing).toBe(false);
+    expect(maxDisplacement(solver)).toBeLessThan(0.02);
+  });
+});
+
 describe("hand contact", () => {
   const tap = run(TAP, cheek);
   const full = run(FULL, cheek);

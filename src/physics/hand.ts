@@ -36,6 +36,10 @@ export interface HandParams {
   dome: number;
   /** depth ceiling in lattice cells — past this the grid cannot unfold */
   maxDepthCells: number;
+  /** a fingertip drawn over the skin: pad radius, press depth, follow rate */
+  fingerRadius: number;
+  fingerDepth: number;
+  fingerRate: number;
 }
 
 export const defaultHandParams: HandParams = {
@@ -51,6 +55,9 @@ export const defaultHandParams: HandParams = {
   elongation: 1.5,
   dome: 0.03,
   maxDepthCells: 1.3,
+  fingerRadius: 0.13,
+  fingerDepth: 0.03,
+  fingerRate: 40,
 };
 
 export interface ContactReport {
@@ -84,7 +91,7 @@ export interface ContactReport {
   rb: number;
 }
 
-type Phase = "drive" | "dwell" | "peel" | "done";
+type Phase = "drive" | "dwell" | "slide" | "peel" | "done";
 
 /** world units ahead of the palm face that still count as touching */
 const CONTACT_TOLERANCE = 0.006;
@@ -92,21 +99,24 @@ const CONTACT_TOLERANCE = 0.006;
 export class Hand {
   readonly params: HandParams;
   /** contact origin (rest space) and unit blow direction, into the flesh */
-  readonly ox: number;
-  readonly oy: number;
-  readonly oz: number;
-  readonly nx: number;
-  readonly ny: number;
-  readonly nz: number;
+  ox: number;
+  oy: number;
+  oz: number;
+  nx = 0;
+  ny = 0;
+  nz = 1;
   /** palm axes: a = fingers, b = across */
-  private readonly ax: number;
-  private readonly ay: number;
-  private readonly az: number;
-  private readonly bx: number;
-  private readonly by: number;
-  private readonly bz: number;
+  private ax = 0;
+  private ay = 1;
+  private az = 0;
+  private bx = 1;
+  private by = 0;
+  private bz = 0;
   private readonly ra: number;
   private readonly rb: number;
+  /** a sliding fingertip chases this offset from its origin */
+  private readonly goal = { x: 0, y: 0, z: 0 };
+  private readonly lattice: Lattice;
   readonly radius: number;
   /** depth of the palm's front face along n; < 0 is outside the skin */
   depth = 0;
@@ -125,17 +135,22 @@ export class Hand {
   private age = 0;
   private phaseAge = 0;
   private readonly maxDepth: number;
-  private readonly ids: Int32Array;
+  private ids: Int32Array = new Int32Array(0);
   /** which candidates carry mass: the dilation ring outside the skin is air */
-  private readonly massive: Uint8Array;
+  private massive: Uint8Array = new Uint8Array(0);
+  /** where the candidate set was last gathered, for a travelling finger */
+  private gatherX = 0;
+  private gatherY = 0;
+  private gatherZ = 0;
   private readonly cellArea: number;
   private readonly cellSize: number;
   private peakDepth = 0;
   private peakTime = 0;
   private peakCount = 0;
-  private firmness: number;
+  private firmness = 0;
   private reported = false;
   private released = false;
+  readonly isFinger: boolean;
 
   constructor(
     lattice: Lattice,
@@ -147,15 +162,46 @@ export class Hand {
     radius: number,
   ) {
     this.params = params;
+    this.lattice = lattice;
     this.strength = strength;
     this.radius = radius;
+    this.isFinger = strength <= 0;
+    this.ox = point.x;
+    this.oy = point.y;
+    this.oz = point.z;
+    this.setFrame(dir);
+    // same footprint as a disc of the nominal radius; a fingertip is round
+    const e = this.isFinger ? 1 : params.elongation;
+    this.ra = radius * Math.sqrt(e);
+    this.rb = radius / Math.sqrt(e);
+    this.arrival = params.arrivalBase + params.arrivalSpeed * strength;
+    this.v = this.arrival;
+    if (this.isFinger) {
+      // already resting on the skin, pressing lightly, never reporting
+      this.phase = "slide";
+      this.depth = params.fingerDepth;
+      this.v = 0;
+      this.reported = true;
+      this.released = true;
+    }
+    // tangential component only — the axial part is the arrival itself
+    const tn =
+      tangential.x * this.nx + tangential.y * this.ny + tangential.z * this.nz;
+    this.tx = tangential.x - this.nx * tn;
+    this.ty = tangential.y - this.ny * tn;
+    this.tz = tangential.z - this.nz * tn;
+    this.maxDepth = lattice.spacing * params.maxDepthCells;
+    this.cellArea = lattice.spacing * lattice.spacing;
+    this.cellSize = lattice.spacing;
+    this.gather(this.ox, this.oy, this.oz);
+  }
+
+  /** the blow direction and the palm axes that hang off it */
+  private setFrame(dir: { x: number; y: number; z: number }): void {
     const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
     this.nx = dir.x / len;
     this.ny = dir.y / len;
     this.nz = dir.z / len;
-    this.ox = point.x;
-    this.oy = point.y;
-    this.oz = point.z;
     // fingers point along world up projected onto the palm plane
     let ax = 0 - this.nx * this.ny;
     let ay = 1 - this.ny * this.ny;
@@ -173,42 +219,29 @@ export class Hand {
     this.bx = this.ny * this.az - this.nz * this.ay;
     this.by = this.nz * this.ax - this.nx * this.az;
     this.bz = this.nx * this.ay - this.ny * this.ax;
-    // same footprint as a disc of the nominal radius
-    const e = params.elongation;
-    this.ra = radius * Math.sqrt(e);
-    this.rb = radius / Math.sqrt(e);
-    this.arrival = params.arrivalBase + params.arrivalSpeed * strength;
-    this.v = this.arrival;
-    // tangential component only — the axial part is the arrival itself
-    const tn =
-      tangential.x * this.nx + tangential.y * this.ny + tangential.z * this.nz;
-    this.tx = tangential.x - this.nx * tn;
-    this.ty = tangential.y - this.ny * tn;
-    this.tz = tangential.z - this.nz * tn;
-    this.maxDepth = lattice.spacing * params.maxDepthCells;
-    this.cellArea = lattice.spacing * lattice.spacing;
-    this.cellSize = lattice.spacing;
+  }
 
-    // candidate particles: anything the palm could sweep through, gathered
-    // once from rest positions with a margin for the smear
-    const { rest, count, anchorW, inside } = lattice;
+  /**
+   * candidate particles: anything the palm could sweep through, gathered
+   * from rest positions around a centre with a margin for the smear. A
+   * travelling fingertip re-gathers as it goes.
+   */
+  private gather(cx: number, cy: number, cz: number): void {
+    const { rest, count, anchorW, inside, spacing } = this.lattice;
+    const p = this.params;
     const ids: number[] = [];
     const massive: number[] = [];
     let firm = 0;
     let firmN = 0;
-    const lateralMargin = 1.4;
+    const lateralMargin = this.isFinger ? 3.5 : 1.4;
     const swipeReach = Math.hypot(this.tx, this.ty, this.tz) * 0.2;
     for (let i = 0; i < count; i++) {
       const i3 = i * 3;
-      const dx = rest[i3] - this.ox;
-      const dy = rest[i3 + 1] - this.oy;
-      const dz = rest[i3 + 2] - this.oz;
+      const dx = rest[i3] - cx;
+      const dy = rest[i3 + 1] - cy;
+      const dz = rest[i3 + 2] - cz;
       const a = dx * this.nx + dy * this.ny + dz * this.nz;
-      if (
-        a < -lattice.spacing ||
-        a > this.maxDepth + params.rim + 2 * lattice.spacing
-      )
-        continue;
+      if (a < -spacing || a > this.maxDepth + p.rim + 2 * spacing) continue;
       const u =
         (dx * this.ax + dy * this.ay + dz * this.az) / (this.ra + swipeReach);
       const w =
@@ -216,7 +249,7 @@ export class Hand {
       if (u * u + w * w > lateralMargin * lateralMargin) continue;
       ids.push(i);
       massive.push(inside[i]);
-      if (inside[i] && u * u + w * w < 1 && a < lattice.spacing) {
+      if (inside[i] && u * u + w * w < 1 && a < spacing) {
         firm += anchorW[i];
         firmN++;
       }
@@ -224,6 +257,34 @@ export class Hand {
     this.ids = Int32Array.from(ids);
     this.massive = Uint8Array.from(massive);
     this.firmness = firmN > 0 ? firm / firmN : 0;
+    this.gatherX = cx;
+    this.gatherY = cy;
+    this.gatherZ = cz;
+  }
+
+  /** a sliding fingertip: where the skin is under the cursor now */
+  moveTo(
+    point: { x: number; y: number; z: number },
+    dir: { x: number; y: number; z: number },
+  ): void {
+    if (this.phase !== "slide") return;
+    this.setFrame(dir);
+    this.goal.x = point.x - this.ox;
+    this.goal.y = point.y - this.oy;
+    this.goal.z = point.z - this.oz;
+    const gx = point.x - this.gatherX;
+    const gy = point.y - this.gatherY;
+    const gz = point.z - this.gatherZ;
+    if (gx * gx + gy * gy + gz * gz > (this.ra * 1.5) ** 2)
+      this.gather(point.x, point.y, point.z);
+  }
+
+  /** the fingertip lifts off */
+  lift(): void {
+    if (this.phase === "slide") {
+      this.phase = "peel";
+      this.phaseAge = 0;
+    }
   }
 
   get done(): boolean {
@@ -299,6 +360,18 @@ export class Hand {
         this.phase = "peel";
         this.phaseAge = 0;
       }
+    } else if (this.phase === "slide") {
+      // the pad chases the cursor; its velocity is what friction hands on
+      const k = 1 - Math.exp(-p.fingerRate * h);
+      const dx = (this.goal.x - this.sx) * k;
+      const dy = (this.goal.y - this.sy) * k;
+      const dz = (this.goal.z - this.sz) * k;
+      this.sx += dx;
+      this.sy += dy;
+      this.sz += dz;
+      this.tx = dx / h;
+      this.ty = dy / h;
+      this.tz = dz / h;
     } else if (this.phase === "peel") {
       // the hand rebounds off the flesh faster than the flesh can follow
       this.depth -= Math.max(p.peelSpeed, this.arrival * 2.5) * h;
@@ -312,13 +385,15 @@ export class Hand {
 
     // the palm slides with its residual swipe while planted
     const slide = this.phase === "peel" ? 0 : 1;
-    this.sx += this.tx * h * slide;
-    this.sy += this.ty * h * slide;
-    this.sz += this.tz * h * slide;
-    const tDecay = Math.exp(-14 * h);
-    this.tx *= tDecay;
-    this.ty *= tDecay;
-    this.tz *= tDecay;
+    if (this.phase !== "slide") {
+      this.sx += this.tx * h * slide;
+      this.sy += this.ty * h * slide;
+      this.sz += this.tz * h * slide;
+      const tDecay = Math.exp(-14 * h);
+      this.tx *= tDecay;
+      this.ty *= tDecay;
+      this.tz *= tDecay;
+    }
 
     // front-face centre
     const cx = this.ox + this.nx * this.depth + this.sx;
