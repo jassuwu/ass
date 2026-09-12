@@ -15,6 +15,7 @@ export class OrbitControl {
   onPinchStart: (() => void) | null = null;
 
   private readonly rig: CameraRig;
+  private readonly dom: HTMLElement;
   private readonly proxy: THREE.Mesh;
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
@@ -24,11 +25,14 @@ export class OrbitControl {
 
   constructor(dom: HTMLElement, rig: CameraRig, proxy: THREE.Mesh) {
     this.rig = rig;
+    this.dom = dom;
     this.proxy = proxy;
     dom.addEventListener("pointerdown", (e) => this.onDown(e));
     window.addEventListener("pointermove", (e) => this.onMove(e));
     window.addEventListener("pointerup", (e) => this.onUp(e));
     window.addEventListener("pointercancel", (e) => this.onUp(e));
+    // the tab lost focus mid-gesture: nothing will ever release it
+    window.addEventListener("blur", () => this.cancel());
     dom.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
   }
 
@@ -37,10 +41,17 @@ export class OrbitControl {
     return this.mode !== "idle";
   }
 
+  cancel(): void {
+    this.pointers.clear();
+    this.mode = "idle";
+    this.lastPinchDist = 0;
+  }
+
   private hitsSpecimen(x: number, y: number): boolean {
+    const rect = this.dom.getBoundingClientRect();
     this.ndc.set(
-      (x / window.innerWidth) * 2 - 1,
-      -((y / window.innerHeight) * 2 - 1),
+      ((x - rect.left) / rect.width) * 2 - 1,
+      -((y - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(this.ndc, this.rig.camera);
     return this.raycaster.intersectObject(this.proxy, false).length > 0;
@@ -52,7 +63,7 @@ export class OrbitControl {
   }
 
   private onDown(e: PointerEvent): void {
-    if (!this.enabled) return;
+    if (!this.enabled || e.button !== 0 || this.pointers.size >= 2) return;
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (this.pointers.size === 2) {
       this.mode = "pinch";
@@ -67,6 +78,7 @@ export class OrbitControl {
   }
 
   private onMove(e: PointerEvent): void {
+    if (!this.enabled) return;
     const p = this.pointers.get(e.pointerId);
     if (!p || this.mode === "idle") {
       if (p) {
@@ -112,6 +124,9 @@ export class OrbitControl {
   private onWheel(e: WheelEvent): void {
     if (!this.enabled) return;
     e.preventDefault();
-    this.rig.zoomBy(Math.exp(e.deltaY * 0.0012));
+    // lines and pages (some mice, some browsers) scaled to pixels
+    const units =
+      e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.dom.clientHeight : 1;
+    this.rig.zoomBy(Math.exp(e.deltaY * units * 0.0012));
   }
 }

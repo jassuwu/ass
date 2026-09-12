@@ -84,10 +84,12 @@ export function noiseBuffer(ctx: AudioContext, seconds: number): AudioBuffer {
 export class AudioEngine {
   private graph: AudioGraph | null = null;
 
-  /** call from a user gesture; idempotent */
-  ensure(): AudioGraph {
+  /** call from a user gesture; idempotent; null where WebAudio is absent */
+  ensure(): AudioGraph | null {
+    if (typeof AudioContext === "undefined") return null;
     if (this.graph) {
-      if (this.graph.ctx.state === "suspended") void this.graph.ctx.resume();
+      if (this.graph.ctx.state === "suspended")
+        void this.graph.ctx.resume().catch(() => {});
       return this.graph;
     }
     const ctx = new AudioContext();
@@ -123,5 +125,15 @@ export class AudioEngine {
 
   get current(): AudioGraph | null {
     return this.graph;
+  }
+
+  suspend(): void {
+    if (this.graph?.ctx.state === "running")
+      void this.graph.ctx.suspend().catch(() => {});
+  }
+
+  resume(): void {
+    if (this.graph?.ctx.state === "suspended")
+      void this.graph.ctx.resume().catch(() => {});
   }
 }

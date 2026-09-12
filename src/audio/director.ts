@@ -32,8 +32,19 @@ export class AudioDirector {
 
   private wake(): void {
     const g = this.engine.ensure();
+    if (!g) return;
     this.bank.load(g);
     if (!this.roomGain) this.startRoomTone(g);
+  }
+
+  /** the tab is hidden: silence costs nothing and the heartbeat resets */
+  pause(): void {
+    this.nextBeat = 0;
+    this.engine.suspend();
+  }
+
+  resume(): void {
+    this.engine.resume();
   }
 
   private startRoomTone(g: AudioGraph): void {

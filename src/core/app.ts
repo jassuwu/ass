@@ -1,5 +1,5 @@
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
+import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import * as THREE from "three/webgpu";
 import { AudioDirector } from "../audio/director";
 import { Pointer } from "../input/pointer";
@@ -10,6 +10,7 @@ import { RippleField } from "../physics/ripples";
 import { MeshSkin } from "../physics/skin";
 import { XpbdSolver } from "../physics/solver";
 import { Pipeline } from "../render/pipeline";
+import { recoverRenderer, useWebGL } from "../render/recovery";
 import { CameraRig } from "../scene/camera-rig";
 import { KillCam } from "../scene/kill-cam";
 import { createStage, type Stage } from "../scene/stage";
@@ -18,7 +19,10 @@ import { maybeAttachDevGui } from "./dev-gui";
 const LATTICE_SPACING = 0.17;
 
 export class App {
-  private renderer = new THREE.WebGPURenderer({ antialias: true });
+  private renderer = new THREE.WebGPURenderer({
+    antialias: true,
+    forceWebGL: useWebGL(),
+  });
   private stage: Stage = createStage();
   private rig = new CameraRig();
   private pointer = new Pointer();
@@ -37,6 +41,8 @@ export class App {
   /** physics sleep: at rest the sim and skinning cost exactly nothing */
   private simSleeping = false;
   private stats: { update: () => void } | null = null;
+  /** the GPU is gone; the loop must not touch it again */
+  private failed = false;
   private baseEnvIntensity = 0.22;
   private readonly baseLightIntensity = {
     key: this.stage.lights.key.intensity,
@@ -72,7 +78,7 @@ export class App {
     );
     this.skin = new MeshSkin(this.solver.lattice, specimen.mesh);
     this.slap = new SlapInteraction(
-      document.body,
+      this.renderer.domElement,
       this.rig.camera,
       specimen.proxy,
       this.solver,
@@ -80,7 +86,11 @@ export class App {
     // press the void and drag to orbit; wheel/pinch to zoom. The two
     // pointer layers coordinate: orbit-drag suppresses brushing, a pinch
     // cancels a press in flight.
-    this.orbit = new OrbitControl(document.body, this.rig, specimen.proxy);
+    this.orbit = new OrbitControl(
+      this.renderer.domElement,
+      this.rig,
+      specimen.proxy,
+    );
     this.slap.blocked = () => this.orbit.dragging;
     this.orbit.onPinchStart = () => this.slap.cancel();
     // the contact is the physics' to report: the wavefront departs from the
@@ -141,6 +151,14 @@ export class App {
   }
 
   async start(root: HTMLElement): Promise<void> {
+    this.renderer.onDeviceLost = (info) => {
+      this.failed = true;
+      this.slap.cancel();
+      this.orbit.cancel();
+      this.audio.pause();
+      this.renderer.setAnimationLoop(null);
+      recoverRenderer(info.api === "WebGPU");
+    };
     await this.renderer.init();
     this.renderer.toneMapping = THREE.AgXToneMapping;
     this.renderer.toneMappingExposure = 1.0;
@@ -153,7 +171,7 @@ export class App {
     // skin believable soft gradients and specular shapes. Kept dim — the
     // void must stay a void. Falls back to a synthetic room if it 404s.
     try {
-      const hdr = await new RGBELoader().loadAsync("/env/studio.hdr");
+      const hdr = await new HDRLoader().loadAsync("/env/studio.hdr");
       hdr.mapping = THREE.EquirectangularReflectionMapping;
       this.stage.scene.environment = hdr;
       // low fill: the sun-key look wants contrast, not softbox mush
@@ -176,8 +194,27 @@ export class App {
 
     root.appendChild(this.renderer.domElement);
     this.resize();
+    // the timer follows page visibility, so a background tab does not come
+    // back with one enormous frame
+    this.timer.connect(document);
     window.addEventListener("resize", () => this.resize());
     this.renderer.setAnimationLoop(() => this.tick());
+    // a hidden tab renders nothing, simulates nothing, and says nothing
+    const visibility = () => {
+      if (this.failed) return;
+      if (document.hidden) {
+        this.slap.cancel();
+        this.orbit.cancel();
+        this.audio.pause();
+        this.renderer.setAnimationLoop(null);
+      } else {
+        this.timer.reset();
+        this.audio.resume();
+        this.renderer.setAnimationLoop(() => this.tick());
+      }
+    };
+    document.addEventListener("visibilitychange", visibility);
+    if (document.hidden) visibility();
     void maybeAttachDevGui(
       this.solver,
       this.slap,
@@ -199,13 +236,19 @@ export class App {
   private resize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // native density on phones; on large Retina displays DPR 2 would mean
+    // six million shaded pixels, so cap the count instead of the ratio
+    const pixelBudget = 3_000_000;
+    this.renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio, 2, Math.sqrt(pixelBudget / (w * h))),
+    );
     this.renderer.setSize(w, h);
     this.rig.setAspect(w / h);
     this.killCam.setAspect(w / h);
   }
 
   private tick(): void {
+    if (this.failed) return;
     // lower bound matters: a first-frame dt of exactly 0 would make the
     // substep h=0 and the velocity update (pos-prev)/h NaN the whole lattice
     this.timer.update();

@@ -110,11 +110,14 @@ export class SlapInteraction {
   onFling: ((power01: number, point: THREE.Vector3) => void) | null = null;
 
   private readonly camera: THREE.Camera;
+  private readonly dom: HTMLElement;
   private readonly proxy: THREE.Mesh;
   private readonly solver: XpbdSolver;
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
   private mode: "idle" | "pending" | "grab" = "idle";
+  /** the one pointer that owns the gesture in flight */
+  private pointerId: number | null = null;
   private holdStart = 0;
   private downX = 0;
   private downY = 0;
@@ -139,6 +142,7 @@ export class SlapInteraction {
     params: Partial<SlapParams> = {},
   ) {
     this.camera = camera;
+    this.dom = dom;
     this.proxy = proxy;
     this.solver = solver;
     this.params = { ...defaultSlapParams, ...params };
@@ -146,6 +150,15 @@ export class SlapInteraction {
     dom.addEventListener("pointerdown", (e) => this.onDown(e));
     window.addEventListener("pointerup", (e) => this.onUp(e));
     window.addEventListener("pointermove", (e) => this.onMove(e));
+    // the browser took the pointer (a system gesture, a palm rejection,
+    // the tab losing focus): nothing will ever release the press
+    window.addEventListener("pointercancel", (e) => {
+      if (e.pointerId === this.pointerId) this.cancel();
+    });
+    window.addEventListener("blur", () => this.cancel());
+    dom.addEventListener("lostpointercapture", (e) => {
+      if (e.pointerId === this.pointerId) this.cancel();
+    });
   }
 
   /** true while a press or grab is in flight — the sim must not sleep */
@@ -157,9 +170,15 @@ export class SlapInteraction {
    * a pinch claims the pointers mid-press */
   cancel(): void {
     if (this.mode === "grab") this.solver.endGrab();
+    const pointerId = this.pointerId;
     this.mode = "idle";
+    this.pointerId = null;
     this.charge = 0;
     this.handVel.set(0, 0, 0);
+    this.lastBrush = null;
+    this.trail.length = 0;
+    if (pointerId !== null && this.dom.hasPointerCapture(pointerId))
+      this.dom.releasePointerCapture(pointerId);
   }
 
   update(): void {
@@ -179,9 +198,10 @@ export class SlapInteraction {
   }
 
   private setRay(clientX: number, clientY: number): void {
+    const rect = this.dom.getBoundingClientRect();
     this.ndc.set(
-      (clientX / window.innerWidth) * 2 - 1,
-      -((clientY / window.innerHeight) * 2 - 1),
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(this.ndc, this.camera);
   }
@@ -217,10 +237,24 @@ export class SlapInteraction {
   }
 
   private onDown(e: PointerEvent): void {
-    if (!this.enabled || this.blocked?.()) return;
+    if (
+      !this.enabled ||
+      this.blocked?.() ||
+      this.mode !== "idle" ||
+      e.button !== 0
+    )
+      return;
     const hit = this.cast(e.clientX, e.clientY);
     if (!hit) return;
     this.mode = "pending";
+    this.pointerId = e.pointerId;
+    this.trail.length = 0;
+    this.track(e.clientX, e.clientY);
+    try {
+      this.dom.setPointerCapture(e.pointerId);
+    } catch {
+      /* synthetic events have no native pointer to capture */
+    }
     this.holdStart = performance.now();
     this.downX = e.clientX;
     this.downY = e.clientY;
@@ -229,6 +263,15 @@ export class SlapInteraction {
   }
 
   private onUp(e: PointerEvent): void {
+    if (e.pointerId !== this.pointerId) return;
+    this.pointerId = null;
+    if (this.dom.hasPointerCapture(e.pointerId))
+      this.dom.releasePointerCapture(e.pointerId);
+    this.charge = 0;
+    if (!this.enabled) {
+      this.cancel();
+      return;
+    }
     if (this.mode === "grab") {
       this.solver.endGrab();
       this.mode = "idle";
@@ -296,6 +339,12 @@ export class SlapInteraction {
   }
 
   private onMove(e: PointerEvent): void {
+    if (this.pointerId !== null && e.pointerId !== this.pointerId) return;
+    if (!this.enabled) return;
+    if (this.mode === "idle" && e.target !== this.dom) {
+      this.lastBrush = null;
+      return;
+    }
     this.track(e.clientX, e.clientY);
     if (this.mode === "pending") {
       const dx = e.clientX - this.downX;
