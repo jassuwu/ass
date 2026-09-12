@@ -1,126 +1,129 @@
-import { type AudioGraph, noiseBuffer } from "./engine";
+import type { AudioGraph } from "./engine";
+import type { BankName, SampleBank } from "./samples";
 
 /**
- * Flesh slap, five layers — the anatomy of a satisfying impact:
- *   1. click — a near-instant broadband transient. The ear reads "contact"
- *      from the first 5ms; without it everything else is just a whump.
- *   2. crack — band-passed noise burst, skin on skin.
- *   3. thump — the mass moving: a hard pitch drop into the 40s, doubled by
- *      a detuned partial for weight.
- *   4. sub — chest pressure, power-gated (only meaningful slaps earn it).
- *   5. tail — low-passed noise wash into the room, the mass settling.
- * Gains and center frequencies scale with power; slight randomization so
- * consecutive slaps never sound copy-pasted.
+ * Hand on flesh from real recordings, layered the way foley is cut:
  *
- * `stretch` is time dilation for the kill cam: durations stretch and
- * frequencies fall into the abyss — but the click keeps most of its edge
- * (sqrt of the dilation), because even in slow motion contact is sharp.
+ *   crack — the hand itself, a recorded skin slap, at the instant of
+ *           contact. Harder swings play louder and a touch lower; a
+ *           glancing swipe thins it out.
+ *   body  — a recorded slap on a buttock, the mass under the palm, fired
+ *           when the solver says the flesh has bottomed out. Deeper and
+ *           wider contact plays it louder and lower; bone tightens it.
+ *   pat   — gentle pats and grabs, for taps that barely land and for a
+ *           handful let go.
+ *
+ * `stretch` is the kill cam's time dilation: the recordings play at
+ * 1/stretch speed, which is exactly what slow-motion sound is.
  */
-export function playSlap(g: AudioGraph, power01: number, stretch = 1): void {
-  const { ctx, dry, wet } = g;
-  const t = ctx.currentTime;
-  const p = Math.min(Math.max(power01, 0), 1);
-  const jitter = 0.9 + Math.random() * 0.2;
-  const fDrop = 1 / Math.sqrt(stretch);
-  const clickStretch = Math.sqrt(stretch);
+export interface FoleyLevels {
+  /** which recording carries the crack */
+  crackBank: "crack" | "leg";
+  crack: number;
+  body: number;
+  pat: number;
+  /** how much of each hit goes to the room */
+  room: number;
+}
 
-  // click — the contact transient
-  const click = ctx.createBufferSource();
-  click.buffer = noiseBuffer(ctx, 0.01 * clickStretch);
-  const hp = ctx.createBiquadFilter();
-  hp.type = "highpass";
-  hp.frequency.value = 1800 * fDrop;
-  const clickGain = ctx.createGain();
-  clickGain.gain.setValueAtTime(0.09 + 0.28 * p, t);
-  clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.012 * clickStretch);
-  click.connect(hp).connect(clickGain).connect(dry);
-  click.start(t);
+export const defaultFoleyLevels: FoleyLevels = {
+  crackBank: "crack",
+  crack: 0.9,
+  body: 0.8,
+  pat: 0.7,
+  room: 0.35,
+};
 
-  // crack — skin
-  const crack = ctx.createBufferSource();
-  crack.buffer = noiseBuffer(ctx, 0.08 * stretch);
-  crack.playbackRate.value = fDrop;
-  const bp = ctx.createBiquadFilter();
-  bp.type = "bandpass";
-  bp.frequency.value = (750 + 1700 * p) * jitter * fDrop;
-  bp.Q.value = 0.9;
-  const crackGain = ctx.createGain();
-  crackGain.gain.setValueAtTime(0.15 + 0.45 * p, t);
-  crackGain.gain.exponentialRampToValueAtTime(0.001, t + 0.1 * stretch);
-  crack.connect(bp).connect(crackGain);
-  crackGain.connect(dry);
-  crackGain.connect(wet);
-  crack.start(t);
+export interface ContactSound {
+  power01: number;
+  radius: number;
+  swipe01: number;
+  stretch?: number;
+}
 
-  // thump — the mass. Hard pitch drop + a detuned partial for weight.
-  const thump = ctx.createOscillator();
-  thump.type = "sine";
-  thump.frequency.setValueAtTime((140 + 60 * p) * jitter * fDrop, t);
-  thump.frequency.exponentialRampToValueAtTime(38 * fDrop, t + 0.16 * stretch);
-  const thumpGain = ctx.createGain();
-  thumpGain.gain.setValueAtTime(0.3 + 0.45 * p, t);
-  thumpGain.gain.exponentialRampToValueAtTime(0.001, t + 0.28 * stretch);
-  thump.connect(thumpGain);
-  thumpGain.connect(dry);
-  thumpGain.connect(wet);
-  thump.start(t);
-  thump.stop(t + 0.3 * stretch);
+export interface BodySound {
+  depth01: number;
+  area: number;
+  firmness: number;
+  stretch?: number;
+}
 
-  const partial = ctx.createOscillator();
-  partial.type = "sine";
-  partial.frequency.setValueAtTime((140 + 60 * p) * 1.5 * jitter * fDrop, t);
-  partial.frequency.exponentialRampToValueAtTime(
-    57 * fDrop,
-    t + 0.16 * stretch,
-  );
-  const partialGain = ctx.createGain();
-  partialGain.gain.setValueAtTime((0.3 + 0.45 * p) * 0.35, t);
-  partialGain.gain.exponentialRampToValueAtTime(0.001, t + 0.2 * stretch);
-  partial.connect(partialGain).connect(dry);
-  partial.start(t);
-  partial.stop(t + 0.22 * stretch);
+const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1);
 
-  // knock — body cavity
-  const knock = ctx.createOscillator();
-  knock.type = "triangle";
-  knock.frequency.value = 175 * jitter * fDrop;
-  const knockGain = ctx.createGain();
-  knockGain.gain.setValueAtTime(0.05 + 0.09 * p, t);
-  knockGain.gain.exponentialRampToValueAtTime(0.001, t + 0.09 * stretch);
-  knock.connect(knockGain).connect(dry);
-  knock.start(t);
-  knock.stop(t + 0.1 * stretch);
-
-  // sub — chest pressure, earned by power (p² gate: taps carry none)
-  const subLevel = 0.45 * p * p;
-  if (subLevel > 0.02) {
-    const sub = ctx.createOscillator();
-    sub.type = "sine";
-    sub.frequency.setValueAtTime(65 * fDrop, t);
-    sub.frequency.exponentialRampToValueAtTime(30 * fDrop, t + 0.4 * stretch);
-    const subGain = ctx.createGain();
-    subGain.gain.setValueAtTime(0.0001, t);
-    subGain.gain.exponentialRampToValueAtTime(subLevel, t + 0.02);
-    subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.5 * stretch);
-    sub.connect(subGain).connect(dry);
-    sub.start(t);
-    sub.stop(t + 0.55 * stretch);
+/** the crack — fire at the instant of contact */
+export function playContact(
+  g: AudioGraph,
+  bank: SampleBank,
+  lv: FoleyLevels,
+  s: ContactSound,
+): void {
+  const p = clamp01(s.power01);
+  const swipe = clamp01(s.swipe01);
+  const stretch = s.stretch ?? 1;
+  // a light tap is a pat, not a slap; the crack fades in with power
+  if (p < 0.12) {
+    bank.play(g, "pat", {
+      gain: lv.pat * (0.5 + 2 * p),
+      rate: 1 / stretch,
+      wet: lv.room * 0.5,
+    });
+    return;
   }
+  const level = lv.crack * (0.22 + 0.78 * p) * (1 - 0.45 * swipe);
+  // a bigger palm and a harder hit sit lower; a swipe skips higher
+  const rate =
+    (1.06 - 0.1 * p - 0.12 * (s.radius - 0.45) + 0.08 * swipe) / stretch;
+  bank.play(g, lv.crackBank as BankName, {
+    gain: level,
+    rate,
+    spread: 0.05,
+    wet: lv.room,
+  });
+}
 
-  // tail — the mass settling into the room, mostly wet
-  const tail = ctx.createBufferSource();
-  tail.buffer = noiseBuffer(ctx, 0.5 * stretch);
-  tail.playbackRate.value = fDrop;
-  const lp = ctx.createBiquadFilter();
-  lp.type = "lowpass";
-  lp.frequency.value = 700 * fDrop;
-  const tailGain = ctx.createGain();
-  tailGain.gain.setValueAtTime(0.08 + 0.22 * p, t + 0.01);
-  tailGain.gain.exponentialRampToValueAtTime(0.001, t + 0.5 * stretch);
-  const tailDry = ctx.createGain();
-  tailDry.gain.value = 0.35;
-  tail.connect(lp).connect(tailGain);
-  tailGain.connect(tailDry).connect(dry);
-  tailGain.connect(wet);
-  tail.start(t);
+/** the body — fire when the flesh under the palm bottoms out */
+export function playBody(
+  g: AudioGraph,
+  bank: SampleBank,
+  lv: FoleyLevels,
+  s: BodySound,
+): void {
+  const depth = clamp01(s.depth01);
+  const firm = clamp01(s.firmness);
+  const area = clamp01(s.area / 0.5);
+  const stretch = s.stretch ?? 1;
+  const level =
+    lv.body * (0.1 + 0.9 * depth) * (0.5 + 0.5 * area) * (1 - 0.4 * firm);
+  if (level < 0.03) return;
+  bank.play(g, "body", {
+    gain: level,
+    // more tissue: lower. bone: tighter, brighter
+    rate: (0.96 - 0.14 * depth + 0.12 * firm) / stretch,
+    spread: 0.04,
+    lowpass: firm > 0.4 ? undefined : 3200 + 3000 * (1 - depth),
+    wet: lv.room,
+  });
+}
+
+/** a handful let go: it falls back against itself with a soft pat */
+export function playPat(
+  g: AudioGraph,
+  bank: SampleBank,
+  lv: FoleyLevels,
+  power01: number,
+): void {
+  const p = clamp01(power01);
+  bank.play(g, "pat", {
+    gain: lv.pat * (0.4 + 0.8 * p),
+    rate: 0.95,
+    wet: lv.room * 0.5,
+  });
+  if (p > 0.5) {
+    bank.play(g, "body", {
+      gain: lv.body * 0.35 * p,
+      rate: 0.9,
+      lowpass: 1800,
+      when: g.ctx.currentTime + 0.012,
+    });
+  }
 }

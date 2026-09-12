@@ -1,19 +1,30 @@
 import { AudioEngine, type AudioGraph, noiseBuffer } from "./engine";
-import { playSlap } from "./foley";
+import { defaultFoleyLevels, playBody, playContact, playPat } from "./foley";
+import { SampleBank } from "./samples";
 
 /**
  * Owns the soundscape, all of it diegetic and unexplained:
  * - room tone: barely-there brown noise + mains hum, faded in after the
  *   first gesture. The void is a place, not an absence.
- * - heartbeat: creeps in while the visitor holds a charge, accelerating
- *   and swelling with it; the room dips alongside. No meter, no UI —
- *   the tension is entirely in the ears.
- * - slap foley on impact, power-scaled.
+ * - heartbeat: a recorded beat that creeps in while the visitor holds a
+ *   charge, accelerating and swelling with it; the room dips alongside.
+ * - contact: recorded slaps — the crack at the instant of the slap, the
+ *   body of the flesh when the physics says the palm has bottomed out.
+ * - brush: a recorded hand over bare skin, gated by the hand's speed.
  */
 export class AudioDirector {
+  readonly levels = { ...defaultFoleyLevels };
+  /** brush loop level at full speed; 0 silences the brush entirely */
+  brushLevel = 0.32;
+  heartLevel = 0.55;
   private engine = new AudioEngine();
+  private bank = new SampleBank();
   private roomGain: GainNode | null = null;
   private nextBeat = 0;
+  private brushGain: GainNode | null = null;
+  private brushFilter: BiquadFilterNode | null = null;
+  private brushStarted = false;
+  private cinemaUntil = 0;
 
   constructor() {
     window.addEventListener("pointerdown", () => this.wake());
@@ -21,6 +32,7 @@ export class AudioDirector {
 
   private wake(): void {
     const g = this.engine.ensure();
+    this.bank.load(g);
     if (!this.roomGain) this.startRoomTone(g);
   }
 
@@ -67,6 +79,29 @@ export class AudioDirector {
     }
   }
 
+  /** the recorded caress, looping silently until the hand moves */
+  private startBrush(g: AudioGraph): boolean {
+    const buffer = this.bank.pick("rub");
+    if (!buffer) return false;
+    const { ctx, dry } = g;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    src.loopStart = 0.05;
+    src.loopEnd = buffer.duration - 0.05;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 4000;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    src.connect(lp).connect(gain).connect(dry);
+    src.start();
+    this.brushGain = gain;
+    this.brushFilter = lp;
+    this.brushStarted = true;
+    return true;
+  }
+
   /**
    * the dive has begun but nothing has hit yet: the room goes silent fast.
    * impactCinema (fired at delivery) owns bringing it back.
@@ -77,17 +112,34 @@ export class AudioDirector {
     this.roomGain.gain.setTargetAtTime(0.02, g.ctx.currentTime, 0.08);
   }
 
-  /** impact from the interaction layer; power01 in 0..1 */
-  impact(power01: number): void {
+  /** the palm meets the skin; power01 in 0..1, radius in world units */
+  impact(power01: number, radius: number, swipe01: number): void {
     const g = this.engine.current;
     if (!g) return;
     this.nextBeat = 0;
-    playSlap(g, power01);
+    playContact(g, this.bank, this.levels, { power01, radius, swipe01 });
   }
 
   /**
-   * kill-cam impact: foley stretched and dropped into the abyss, the room
-   * gone silent, a sub swell underneath — then the world fades back in.
+   * the flesh under the palm bottoms out — reported by the solver, so in
+   * the kill cam it arrives as late as the slow motion makes it
+   */
+  contact(depth01: number, area: number, firmness: number, stretch = 1): void {
+    const g = this.engine.current;
+    if (!g) return;
+    playBody(g, this.bank, this.levels, { depth01, area, firmness, stretch });
+  }
+
+  /** a grabbed handful let go at speed */
+  fling(power01: number): void {
+    const g = this.engine.current;
+    if (!g) return;
+    playPat(g, this.bank, this.levels, power01);
+  }
+
+  /**
+   * kill-cam impact: the crack at quarter speed, dropped into the abyss,
+   * the room gone silent, a sub swell underneath — then the world fades back.
    * @param durationS real-time length of the slow-motion sequence
    */
   impactCinema(power01: number, durationS: number): void {
@@ -96,8 +148,14 @@ export class AudioDirector {
     this.nextBeat = 0;
     const { ctx, dry } = g;
     const t = ctx.currentTime;
+    this.cinemaUntil = t + durationS;
 
-    playSlap(g, power01, 4);
+    playContact(g, this.bank, this.levels, {
+      power01,
+      radius: 0.6,
+      swipe01: 0,
+      stretch: 4,
+    });
 
     if (this.roomGain) {
       this.roomGain.gain.setTargetAtTime(0.03, t, 0.12);
@@ -123,11 +181,24 @@ export class AudioDirector {
     }
   }
 
-  /** call every frame with the current hold charge (0..1) */
-  update(charge: number): void {
+  /**
+   * call every frame with the current hold charge (0..1) and the brush
+   * speed over the skin (world units/s)
+   */
+  update(charge: number, brushSpeed = 0): void {
     const g = this.engine.current;
     if (!g) return;
     const t = g.ctx.currentTime;
+
+    if (!this.brushStarted && brushSpeed > 0) this.startBrush(g);
+    if (this.brushGain && this.brushFilter) {
+      const s = Math.min(1, brushSpeed / 2.5);
+      this.brushGain.gain.setTargetAtTime(this.brushLevel * s ** 1.4, t, 0.04);
+      this.brushFilter.frequency.setTargetAtTime(2200 + 3500 * s, t, 0.06);
+    }
+
+    // the cinema envelope owns the room until the shot ends
+    if (t < this.cinemaUntil) return;
 
     // the room holds its breath as the charge builds
     if (this.roomGain) {
@@ -141,29 +212,15 @@ export class AudioDirector {
     if (this.nextBeat === 0) this.nextBeat = t + 0.05;
     const interval = 60 / (52 + 68 * charge);
     while (this.nextBeat < t + 0.12) {
-      this.playBeat(g, this.nextBeat, charge);
+      this.bank.play(g, "heart", {
+        gain: this.heartLevel * (0.25 + 0.75 * charge),
+        // the beat itself quickens a little with the pulse
+        rate: 0.95 + 0.25 * charge,
+        spread: 0.02,
+        when: this.nextBeat,
+        lowpass: 900,
+      });
       this.nextBeat += interval;
     }
-  }
-
-  private playBeat(g: AudioGraph, when: number, charge: number): void {
-    const peak = 0.05 + 0.13 * charge;
-    this.thud(g, when, peak);
-    this.thud(g, when + 0.17, peak * 0.65);
-  }
-
-  private thud(g: AudioGraph, when: number, peak: number): void {
-    const { ctx, dry } = g;
-    const osc = ctx.createOscillator();
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(62, when);
-    osc.frequency.exponentialRampToValueAtTime(38, when + 0.09);
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, when);
-    gain.gain.exponentialRampToValueAtTime(peak, when + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.12);
-    osc.connect(gain).connect(dry);
-    osc.start(when);
-    osc.stop(when + 0.14);
   }
 }
