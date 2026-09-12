@@ -46,6 +46,13 @@ export class App {
   };
 
   constructor() {
+    // the OS asked for stillness: no breathing, no parallax, and the kill
+    // cam's dive never happens — a full-charge slap simply lands
+    const motion = matchMedia("(prefers-reduced-motion: reduce)");
+    this.rig.reducedMotion = motion.matches;
+    motion.addEventListener("change", () => {
+      this.rig.reducedMotion = motion.matches;
+    });
     const { specimen } = this.stage;
     specimen.mesh.geometry.computeBoundingBox();
     const bounds = (
@@ -117,7 +124,8 @@ export class App {
       radius,
       tangential,
     ) => {
-      if (power01 < 0.95 || !this.killCam.idle) return false;
+      if (this.rig.reducedMotion || power01 < 0.95 || !this.killCam.idle)
+        return false;
       const kp = this.killCam.params;
       this.audio.holdBreath();
       this.killCam.trigger(this.rig, point, dir, () => {

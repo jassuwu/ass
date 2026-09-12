@@ -48,6 +48,8 @@ export class CameraRig {
   readonly camera = new THREE.PerspectiveCamera(FRAME.fovDeg, 1, 0.1, 100);
   /** composition center — where the frame looks */
   readonly target = FRAME.target;
+  /** prefers-reduced-motion: no parallax, no breathing — the frame holds */
+  reducedMotion = false;
   private yaw = 0;
   private pitch = 0;
   private baseDistance = 7;
@@ -99,14 +101,16 @@ export class CameraRig {
   update(dt: number, pointer: Pointer): void {
     this.elapsed += dt;
     const k = 1 - Math.exp(-FRAME.damping * dt);
-    this.yaw += (pointer.x * FRAME.yawRange - this.yaw) * k;
-    this.pitch += (pointer.y * FRAME.pitchRange - this.pitch) * k;
+    const still = this.reducedMotion ? 0 : 1;
+    this.yaw += (still * pointer.x * FRAME.yawRange - this.yaw) * k;
+    this.pitch += (still * pointer.y * FRAME.pitchRange - this.pitch) * k;
     const ko = 1 - Math.exp(-ORBIT.damping * dt);
     this.oYaw += (this.orbitYaw - this.oYaw) * ko;
     this.oPitch += (this.orbitPitch - this.oPitch) * ko;
     this.oZoom += (this.orbitZoom - this.oZoom) * ko;
 
     const breathe =
+      still *
       Math.sin((this.elapsed * Math.PI * 2) / FRAME.breathePeriodS) *
       FRAME.breatheAmp;
     const d = this.baseDistance * this.oZoom + breathe;
