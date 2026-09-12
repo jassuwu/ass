@@ -43,6 +43,8 @@ export class App {
   private stats: { update: () => void } | null = null;
   /** the GPU is gone; the loop must not touch it again */
   private failed = false;
+  /** the first real frame has been shown; the poster may go */
+  private presented = false;
   private baseEnvIntensity = 0.22;
   private readonly baseLightIntensity = {
     key: this.stage.lights.key.intensity,
@@ -311,6 +313,10 @@ export class App {
       this.renderer.render(this.stage.scene, this.renderCam);
     }
     this.stats?.update();
+    if (!this.presented) {
+      this.presented = true;
+      document.documentElement.dataset.ready = "true";
+    }
   }
 
   private syncRenderCam(source: THREE.PerspectiveCamera): void {
