@@ -50,11 +50,22 @@ commits with --no-verify, no co-author lines. Segmented conventional commits.
   orbit/zoom. Distance solved from aspect (max of width-fit/height-fit;
   ultrawide letterboxes into side voids).
 - `src/physics/` — XPBD: `lattice.ts` (volumetric particle grid + graded
-  anchor field: body side, torso, thighs, depth-based core hold),
-  `solver.ts` (small-substeps XPBD), `skin.ts` (trilinear embedding).
+  anchor field: body side, torso, thighs, depth-based core hold; six
+  tetrahedra per cell for volume), `solver.ts` (small-substeps XPBD with
+  volume conservation, tension-stiffer edges, neighbour viscosity),
+  `hand.ts` (the palm as a rigid elliptical collider with a dynamic
+  drive/dwell/peel and sticky friction — depth is an outcome of arrival
+  speed, arm push and the flesh's reaction), `skin.ts` (trilinear embedding).
 - `src/interaction/slap.ts` — tap / hold-to-charge / cursor brush. Exposes
-  `charge` for audio. Impacts go through `solver.spank()` (contact press:
-  dent in → sideways splash → lattice recovers), never a bare impulse.
+  `charge` and `brushSpeed` for audio. Impacts go through `solver.slap()`
+  (a Hand lands), never a bare impulse. The solver reports `onContact`
+  (palm bottomed out: depth, area, firmness) and `onRelease` (palm peeling);
+  ripples, flush and the body of the sound read from those, not from power.
+- `src/audio/` — all synthesised. `foley.ts` models the slap as a cavity
+  clap (resonant bands pitched by palm size and squeeze) at contact plus a
+  damped two-mode body thump when the solver says the flesh bottomed out;
+  brush is speed-gated friction noise; the room is early reflections plus
+  a damped diffuse tail. No pitch sweeps, no sub outside the kill cam.
 - `src/interaction/orbit.ts` — void-drag orbit + wheel/pinch zoom. Shares
   the pointer with slap via `blocked`/`cancel`.
 - Tuning: append `?dev` for the lil-gui bench (dynamically imported, never in
@@ -76,10 +87,12 @@ tap/hold/brush interaction, dev bench, audio layer (room tone, foley,
 heartbeat), kill cam (full-charge trigger, slow-mo, cinema bars, stretched
 audio), impact ripple wavefronts, PMREM environment fill, procedural TSL skin
 material, post pipeline (dof with live focus pull, bloom, vignette, grain),
-contact-press slap model (hand dents in, flesh splashes sideways, wavefront
-departs from the contact rim as the palm peels away), accumulating spank
-flush (per-vertex redness, blotch-modulated, shader-side decay), void-drag
-orbit + wheel/pinch zoom within PG-13 clamps.
+hand-collider slap model (a rigid palm arrives, drives against the flesh's
+reaction, dwells, bounces off; volume-conserving tissue bulges at the rim
+and wobbles on its own), accumulating spank flush (per-vertex redness,
+blotch-modulated, shader-side decay), void-drag orbit + wheel/pinch zoom
+within PG-13 clamps, modelled foley (clap + body, friction brush, small
+dead room). `bun run test` runs the numeric contact checks.
 Next: sculpted asset with UVs + real skin texture maps (pores need textures —
 procedural bump was punted, @types lag noted in render/pipeline.ts) → perf
 pass / WebGPU compute port of solver+skinning if needed → deploy + domain.

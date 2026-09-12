@@ -76,26 +76,51 @@ export class App {
     this.orbit = new OrbitControl(document.body, this.rig, specimen.proxy);
     this.slap.blocked = () => this.orbit.dragging;
     this.orbit.onPinchStart = () => this.slap.cancel();
-    // the wavefront departs only when the hand peels away, from the rim of
-    // the contact patch — a slap is not a stone dropped in a pond
-    const waveLag = () =>
-      this.solver.params.pressAttackS + this.solver.params.pressHoldS;
-    this.slap.onImpact = (power01, point, _dir, radius) => {
-      this.ripples.spawn(point, power01, 1, waveLag(), radius * 0.8);
-      specimen.flush.splat(point, radius, power01);
-      this.audio.impact(power01);
+    // the contact is the physics' to report: the wavefront departs from the
+    // rim of the patch the moment the palm peels away, sized by the depth
+    // the palm actually reached; the flush blooms where it pressed
+    const depthRef =
+      this.solver.lattice.spacing * this.solver.hand.maxDepthCells;
+    const point = new THREE.Vector3();
+    this.solver.onRelease = (r) => {
+      const depth01 = Math.min(1, r.depth / depthRef);
+      point.set(r.x, r.y, r.z);
+      this.ripples.spawn(
+        point,
+        depth01,
+        this.killCam.active ? 1.35 : 1,
+        0,
+        r.radius * 0.8,
+      );
+      specimen.flush.splat(point, r.radius * (1 + 0.15 * depth01), depth01);
     };
+    this.solver.onContact = (r) =>
+      this.audio.contact(
+        Math.min(1, r.depth / depthRef),
+        r.area,
+        r.firmness,
+        this.killCam.active ? 4 : 1,
+      );
+    this.slap.onImpact = (power01, _point, _dir, radius, swipe01) => {
+      this.audio.impact(power01, radius, swipe01);
+    };
+    this.slap.onFling = (power01) => this.audio.fling(power01);
     // a full charge earns the kill cam — unannounced, undocumented. The
     // release is intercepted BEFORE the impulse: the camera travels first,
     // and the hit lands on camera once the lens is seated.
-    this.slap.onIntercept = (power01, point, dir, power, radius) => {
+    this.slap.onIntercept = (
+      power01,
+      point,
+      dir,
+      power,
+      radius,
+      tangential,
+    ) => {
       if (power01 < 0.95 || !this.killCam.idle) return false;
       const kp = this.killCam.params;
       this.audio.holdBreath();
       this.killCam.trigger(this.rig, point, dir, () => {
-        this.solver.spank(point, dir, power, radius);
-        this.ripples.spawn(point, power01, 1.35, waveLag(), radius * 0.8);
-        specimen.flush.splat(point, radius * 1.15, power01);
+        this.solver.slap(point, dir, tangential, power, radius);
         this.audio.impactCinema(power01, kp.freezeS + kp.crawlS + kp.returnS);
       });
       return true;
@@ -147,6 +172,7 @@ export class App {
       this.pipeline,
       this.killCam,
       this.stage.specimen.flush,
+      this.audio,
     );
     if (new URLSearchParams(window.location.search).has("dev")) {
       const { default: Stats } = await import("stats-gl");
@@ -175,7 +201,7 @@ export class App {
     this.orbit.enabled = !this.killCam.active;
     this.slap.update();
     this.stage.specimen.flush.update();
-    this.audio.update(this.slap.charge);
+    this.audio.update(this.slap.charge, this.slap.brushSpeed);
     this.killCam.update(dt, this.rig);
 
     // cinema grade: house lights bow out so the raking light can carve the
