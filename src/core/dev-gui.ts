@@ -46,6 +46,10 @@ export async function maybeAttachDevGui(
   c.add(flesh.hand, "rim", 0.01, 0.2);
   c.add(flesh.hand, "elongation", 1, 2.5);
   c.add(flesh.hand, "dome", 0, 0.08);
+  c.add(flesh.hand, "feather", 0, 0.3);
+  c.add(flesh.hand, "fingerRadius", 0.04, 0.25);
+  c.add(flesh.hand, "fingerDepth", 0, 0.06);
+  c.add(flesh.hand, "fingerFeather", 0, 0.15);
   c.add(flesh.hand, "maxDepthCells", 0.5, 2.5);
 
   const f = gui.addFolder("flush");

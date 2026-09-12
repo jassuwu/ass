@@ -41,6 +41,9 @@ export interface HandParams {
   fingerDepth: number;
   fingerRate: number;
   fingerRim: number;
+  /** how far beyond the edge the skin still slopes into the print */
+  feather: number;
+  fingerFeather: number;
 }
 
 export const defaultHandParams: HandParams = {
@@ -56,10 +59,12 @@ export const defaultHandParams: HandParams = {
   elongation: 1.5,
   dome: 0.03,
   maxDepthCells: 1.3,
-  fingerRadius: 0.14,
-  fingerDepth: 0.035,
+  fingerRadius: 0.1,
+  fingerDepth: 0.018,
   fingerRate: 40,
-  fingerRim: 0.045,
+  fingerRim: 0.03,
+  feather: 0.11,
+  fingerFeather: 0.035,
 };
 
 /**
@@ -85,6 +90,7 @@ export interface PalmFrame {
   rb: number;
   rim: number;
   dome: number;
+  feather: number;
 }
 
 export interface PalmHit {
@@ -250,6 +256,7 @@ export class Hand {
     rb: 1,
     rim: 0,
     dome: 0,
+    feather: 0,
   };
   private readonly hit: PalmHit = { sd: 0, gx: 0, gy: 0, gz: 0, en: 0, a: 0 };
 
@@ -653,6 +660,7 @@ export class Hand {
       // a fingertip's face is a bowl as deep as its press: it meets the
       // surface at its own edge instead of cutting a disc into it
       dome: this.isFinger ? p.fingerDepth : p.dome,
+      feather: this.isFinger ? p.fingerFeather : p.feather,
     };
   }
 }

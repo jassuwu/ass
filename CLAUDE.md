@@ -99,6 +99,11 @@ commits with --no-verify, no co-author lines. Segmented conventional commits.
   it records every gesture at ~60 fps through Chrome's screencast and
   builds contact sheets under `/tmp/ass-vid/`. A screenshot takes ~200 ms
   and cannot resolve a 60 ms contact; `bun run test` traces the numbers.
+- Skinning is a quadratic B-spline over 27 particles (`skin.ts`), not
+  trilinear over 8: trilinear shows every lattice cell as a box the moment
+  the lattice moves, worst in the first frames of a hit seen obliquely.
+- The palm lands along the surface normal at the hit, never the view ray;
+  a blow near the silhouette or after orbiting would otherwise plough.
 - The skin conforms to the palm at mesh resolution (`skin.ts` refine):
   the lattice carries volume and wobble, the exact print shape is applied
   to vertices along the blow axis with a feathered edge. Skin maps are

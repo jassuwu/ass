@@ -3,16 +3,14 @@ import type { Lattice } from "./lattice";
 import type { RippleField } from "./ripples";
 
 /**
- * Embeds the render mesh in the lattice: each vertex gets trilinear weights
- * over the 8 particles of its grid cell (renormalized when corners are
- * missing at the surface). Per frame, vertices ride the particles'
- * displacement field and normals are recomputed from the deformed faces.
+ * Embeds the render mesh in the lattice: each vertex gets quadratic
+ * B-spline weights over the 27 particles around it (renormalized where
+ * particles are missing at the surface). Per frame, vertices ride the
+ * particles' displacement field and normals are recomputed from the
+ * deformed faces.
  *
  * Pure arrays in, pure arrays out — this runs wherever the solver runs.
  */
-/** how far beyond the palm's edge the skin still slopes into the print */
-const FEATHER_OUT = 0.11;
-
 export class MeshSkin {
   private readonly vertCount: number;
   private readonly base: Float32Array;
@@ -33,13 +31,26 @@ export class MeshSkin {
     this.base = base;
     this.baseNormal = baseNormal;
     this.index = index;
-    this.ids = new Int32Array(this.vertCount * 8).fill(-1);
-    this.weights = new Float32Array(this.vertCount * 8);
+    // Quadratic B-spline embedding: each vertex reads the displacement of
+    // the 27 particles around it with C1 weights, so the deformation field
+    // has no slope breaks at cell faces. Trilinear over 8 shows every cell
+    // as a box the moment the lattice moves; this cannot.
+    this.ids = new Int32Array(this.vertCount * 27).fill(-1);
+    this.weights = new Float32Array(this.vertCount * 27);
 
     const { origin, spacing, nx, ny, nz, nodeToParticle, rest, count } =
       lattice;
     const nodeIndex = (i: number, j: number, k: number) =>
       i + j * nx + k * nx * ny;
+    const spline = (d: number, out: Float32Array) => {
+      // d: offset from the nearest node, in cells, in [-0.5, 0.5]
+      out[0] = 0.5 * (0.5 - d) * (0.5 - d);
+      out[1] = 0.75 - d * d;
+      out[2] = 0.5 * (0.5 + d) * (0.5 + d);
+    };
+    const wx = new Float32Array(3);
+    const wy = new Float32Array(3);
+    const wz = new Float32Array(3);
 
     for (let v = 0; v < this.vertCount; v++) {
       const px = this.base[v * 3];
@@ -48,31 +59,33 @@ export class MeshSkin {
       const gx = (px - origin.x) / spacing;
       const gy = (py - origin.y) / spacing;
       const gz = (pz - origin.z) / spacing;
-      const ci = Math.min(Math.max(Math.floor(gx), 0), nx - 2);
-      const cj = Math.min(Math.max(Math.floor(gy), 0), ny - 2);
-      const ck = Math.min(Math.max(Math.floor(gz), 0), nz - 2);
-      const fx = Math.min(Math.max(gx - ci, 0), 1);
-      const fy = Math.min(Math.max(gy - cj, 0), 1);
-      const fz = Math.min(Math.max(gz - ck, 0), 1);
+      const ci = Math.min(Math.max(Math.round(gx), 1), nx - 2);
+      const cj = Math.min(Math.max(Math.round(gy), 1), ny - 2);
+      const ck = Math.min(Math.max(Math.round(gz), 1), nz - 2);
+      spline(Math.min(Math.max(gx - ci, -0.5), 0.5), wx);
+      spline(Math.min(Math.max(gy - cj, -0.5), 0.5), wy);
+      spline(Math.min(Math.max(gz - ck, -0.5), 0.5), wz);
 
       let total = 0;
-      for (let c = 0; c < 8; c++) {
-        const dx = c & 1;
-        const dy = (c >> 1) & 1;
-        const dz = (c >> 2) & 1;
-        const id = nodeToParticle[nodeIndex(ci + dx, cj + dy, ck + dz)];
-        if (id === -1) continue;
-        const w = (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy) * (dz ? fz : 1 - fz);
-        this.ids[v * 8 + c] = id;
-        this.weights[v * 8 + c] = w;
-        total += w;
+      let c = 0;
+      for (let dk = -1; dk <= 1; dk++) {
+        for (let dj = -1; dj <= 1; dj++) {
+          for (let di = -1; di <= 1; di++, c++) {
+            const id = nodeToParticle[nodeIndex(ci + di, cj + dj, ck + dk)];
+            if (id === -1) continue;
+            const w = wx[di + 1] * wy[dj + 1] * wz[dk + 1];
+            this.ids[v * 27 + c] = id;
+            this.weights[v * 27 + c] = w;
+            total += w;
+          }
+        }
       }
 
       if (total > 1e-9) {
-        for (let c = 0; c < 8; c++) this.weights[v * 8 + c] /= total;
+        for (let k = 0; k < 27; k++) this.weights[v * 27 + k] /= total;
       } else {
-        // surface vertex fell in a cell with no particles — bind to the
-        // nearest particle outright (rare; the dilation makes it rarer)
+        // surface vertex fell outside every particle's support — bind to
+        // the nearest particle outright (rare; the dilation makes it rarer)
         let best = 0;
         let bestD2 = Number.POSITIVE_INFINITY;
         for (let i = 0; i < count; i++) {
@@ -85,8 +98,8 @@ export class MeshSkin {
             best = i;
           }
         }
-        this.ids[v * 8] = best;
-        this.weights[v * 8] = 1;
+        this.ids[v * 27] = best;
+        this.weights[v * 27] = 1;
       }
     }
 
@@ -96,10 +109,10 @@ export class MeshSkin {
     this.capacity = new Float32Array(this.vertCount);
     for (let v = 0; v < this.vertCount; v++) {
       let anchored = 0;
-      for (let c = 0; c < 8; c++) {
-        const id = this.ids[v * 8 + c];
+      for (let c = 0; c < 27; c++) {
+        const id = this.ids[v * 27 + c];
         if (id === -1) continue;
-        anchored += lattice.anchorW[id] * this.weights[v * 8 + c];
+        anchored += lattice.anchorW[id] * this.weights[v * 27 + c];
       }
       this.capacity[v] = Math.min(Math.max(1 - anchored, 0), 1);
     }
@@ -124,10 +137,10 @@ export class MeshSkin {
       let dx = 0;
       let dy = 0;
       let dz = 0;
-      for (let c = 0; c < 8; c++) {
-        const id = this.ids[v * 8 + c];
+      for (let c = 0; c < 27; c++) {
+        const id = this.ids[v * 27 + c];
         if (id === -1) continue;
-        const w = this.weights[v * 8 + c];
+        const w = this.weights[v * 27 + c];
         const i3 = id * 3;
         dx += (pos[i3] - rest[i3]) * w;
         dy += (pos[i3 + 1] - rest[i3 + 1]) * w;
@@ -162,11 +175,11 @@ export class MeshSkin {
    * print the way skin under tension does instead of stepping.
    */
   private refine(palm: PalmFrame, outPos: Float32Array): void {
-    const reach = Math.max(palm.ra, palm.rb) + FEATHER_OUT + 0.15;
+    const reach = Math.max(palm.ra, palm.rb) + palm.feather + 0.15;
     const reach2 = reach * reach;
     // feather widths in ellipse-normalised units
     const inner = 1 - palm.rim / Math.min(palm.ra, palm.rb);
-    const outer = 1 + FEATHER_OUT / Math.min(palm.ra, palm.rb);
+    const outer = 1 + palm.feather / Math.min(palm.ra, palm.rb);
     for (let v = 0; v < this.vertCount; v++) {
       const i = v * 3;
       let dx = this.base[i] - palm.cx;

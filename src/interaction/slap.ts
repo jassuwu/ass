@@ -54,7 +54,7 @@ export const defaultSlapParams: SlapParams = {
   brushRadius: 0.35,
   grabRadius: 0.55,
   maxPull: 0.5,
-  swipeInfluence: 0.85,
+  swipeInfluence: 0.3,
   swipeRefSpeed: 1400,
   swipePowerBonus: 0.3,
   flingGain: 0.6,
@@ -309,9 +309,14 @@ export class SlapInteraction {
     // ease-in so a lazy half-hold doesn't already feel like a haymaker
     const curve = charge * charge;
     const radius = p.radius + curve * p.chargeRadiusBonus;
-    // cloned: the raycaster's direction is reused by every later cast
+    // the palm lands along the skin's normal, not the line of sight: a
+    // blow near the silhouette or after orbiting would otherwise arrive
+    // edge-on and plough a valley. Cloned: the raycaster's vectors are
+    // reused by every later cast.
     const point = hit.point.clone();
-    const dir = this.raycaster.ray.direction.clone();
+    const dir = hit.face
+      ? hit.face.normal.clone().negate()
+      : this.raycaster.ray.direction.clone();
 
     // follow-through: tilt the blow toward where the cursor is headed, and
     // carry the swipe into the palm as real sideways velocity

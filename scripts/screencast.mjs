@@ -50,6 +50,12 @@ await page.waitForTimeout(800);
 await record("brush", async () => { await page.mouse.move(380, 380); await page.waitForTimeout(100); await page.mouse.move(620, 300, { steps: 40 }); await page.waitForTimeout(500); }, cropL);
 await page.waitForTimeout(800);
 await record("grab", async () => { await page.mouse.move(cheek.x, cheek.y + 30); await page.waitForTimeout(150); await page.mouse.down(); await page.waitForTimeout(250); await page.mouse.move(cheek.x + 90, cheek.y + 60, { steps: 12 }); await page.waitForTimeout(200); await page.mouse.move(cheek.x - 60, cheek.y - 20, { steps: 3 }); await page.mouse.up(); await page.waitForTimeout(900); }, cropL);
+await page.waitForTimeout(800);
+// a hit near the outer silhouette, where the line of sight grazes the skin
+await record("side", async () => { await page.mouse.move(255, 380); await page.waitForTimeout(150); await page.mouse.down(); await page.waitForTimeout(700); await page.mouse.up(); await page.waitForTimeout(900); }, { x: 60, y: 120, w: 560, h: 560 });
+await page.waitForTimeout(800);
+// orbit the camera left by dragging the void, then hit the cheek at an angle
+await record("angled", async () => { await page.mouse.move(60, 400); await page.mouse.down(); await page.mouse.move(330, 390, { steps: 12 }); await page.mouse.up(); await page.waitForTimeout(700); await page.mouse.move(560, 340); await page.waitForTimeout(150); await page.mouse.down(); await page.waitForTimeout(700); await page.mouse.up(); await page.waitForTimeout(900); }, cropL);
 await page.waitForTimeout(1000);
 await record("killcam", async () => { await page.mouse.move(780, 330); await page.waitForTimeout(150); await page.mouse.down(); await page.waitForTimeout(1300); await page.mouse.up(); await page.waitForTimeout(4600); });
 await browser.close();
