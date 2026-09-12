@@ -24,6 +24,10 @@ export class MeshSkin {
     const posAttr = mesh.geometry.attributes.position;
     this.vertCount = posAttr.count;
     this.base = new Float32Array(posAttr.array);
+    // The exact SDF-gradient normals alias into a zipper along the crease,
+    // and the first deformation replaces them with smooth mesh normals
+    // anyway. Start with those so the frame never changes character.
+    mesh.geometry.computeVertexNormals();
     this.baseNormal = new Float32Array(mesh.geometry.attributes.normal.array);
     this.ids = new Int32Array(this.vertCount * 8).fill(-1);
     this.weights = new Float32Array(this.vertCount * 8);
