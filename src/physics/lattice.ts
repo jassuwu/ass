@@ -15,12 +15,18 @@ export interface Lattice {
   nz: number;
   /** rest positions, xyz per particle */
   rest: Float32Array;
+  /** 1 where the rest position is inside the body, 0 for the dilation ring */
+  inside: Uint8Array;
   /** grid node index -> particle id, -1 where no particle */
   nodeToParticle: Int32Array;
   /** distance constraints: particle pairs + rest lengths */
   cA: Uint32Array;
   cB: Uint32Array;
   cRest: Float32Array;
+  /** six consistently oriented tetrahedra per occupied cell, 4 ids each */
+  tetrahedra: Uint32Array;
+  /** six times the rest volume of one tetrahedron (= spacing³) */
+  restVolume6: number;
   /**
    * attachment strength 0..1 — how firmly a particle belongs to the body
    * behind the surface. ~1 on the far (-z) side and toward the lower back,
@@ -140,6 +146,7 @@ export function buildLattice(
   }
 
   const rest = new Float32Array(count * 3);
+  const q0 = new THREE.Vector3();
   for (let k = 0; k < nz; k++) {
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
@@ -150,6 +157,13 @@ export function buildLattice(
         rest[id * 3 + 2] = origin.z + k * spacing;
       }
     }
+  }
+
+  const inside = new Uint8Array(count);
+  for (let a = 0; a < count; a++) {
+    inside[a] = isInside(q0.set(rest[a * 3], rest[a * 3 + 1], rest[a * 3 + 2]))
+      ? 1
+      : 0;
   }
 
   // anchor field: the body owns the far side and the lower back;
@@ -210,6 +224,33 @@ export function buildLattice(
     }
   }
 
+  // volume elements: each occupied cell split into six tetrahedra around
+  // its main diagonal, so a dent has to displace tissue rather than crush it
+  const tetrahedra: number[] = [];
+  const corners = new Int32Array(8);
+  const ring = [1, 3, 2, 6, 4, 5];
+  for (let k = 0; k < cellsZ; k++) {
+    for (let j = 0; j < cellsY; j++) {
+      for (let i = 0; i < cellsX; i++) {
+        if (!dilated[cellIndex(i, j, k)]) continue;
+        for (let c = 0; c < 8; c++) {
+          corners[c] =
+            nodeToParticle[
+              nodeIndex(i + (c & 1), j + ((c >> 1) & 1), k + ((c >> 2) & 1))
+            ];
+        }
+        for (let t = 0; t < 6; t++) {
+          tetrahedra.push(
+            corners[0],
+            corners[ring[t]],
+            corners[ring[(t + 1) % 6]],
+            corners[7],
+          );
+        }
+      }
+    }
+  }
+
   return {
     count,
     spacing,
@@ -218,10 +259,13 @@ export function buildLattice(
     ny,
     nz,
     rest,
+    inside,
     nodeToParticle,
     cA: Uint32Array.from(a),
     cB: Uint32Array.from(b),
     cRest: Float32Array.from(restLen),
+    tetrahedra: Uint32Array.from(tetrahedra),
+    restVolume6: spacing ** 3,
     anchorW,
   };
 }
